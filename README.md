@@ -1,2 +1,2 @@
-# Anwendungen der KI 2122 - Gruppe 5
+# Anwendungen der KI 21-22 - Gruppe 5
 
