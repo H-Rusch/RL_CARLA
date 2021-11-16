@@ -1,24 +1,10 @@
-#!/usr/bin/env python
-
-# Copyright (c) 2018 Intel Labs.
-# authors: German Ros (german.ros@intel.com)
-#
-# This work is licensed under the terms of the MIT license.
-# For a copy, see <https://opensource.org/licenses/MIT>.
-
-"""Example of automatic vehicle control from client side."""
-
 from __future__ import print_function
 
-import argparse
-import collections
-import datetime
 import glob
 import logging
 import math
 import os
 import numpy.random as random
-import re
 import sys
 import weakref
 
@@ -55,7 +41,7 @@ except IndexError:
     pass
 
 import carla
-from carla import ColorConverter as cc
+from carla import ColorConverter as cc, Transform, Location, Rotation
 
 # ==============================================================================
 # -- Defining Constants --------------------------------------------------------
@@ -66,17 +52,6 @@ HOST = 2000
 
 WIDTH = 640
 HEIGHT = 480
-
-
-# ==============================================================================
-# -- Global functions ----------------------------------------------------------
-# ==============================================================================
-
-
-def get_actor_display_name(actor, truncate=250):
-    """Method to get actor display name"""
-    name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
-    return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
 
 # ==============================================================================
@@ -96,90 +71,40 @@ class World(object):
             print('  The server could not send the OpenDRIVE (.xodr) file:')
             print('  Make sure it exists, has the same name of your town, and is correct.')
             sys.exit(1)
-        self.player = None
+        self.agent = None
         self.collision_sensor = None
         self.gnss_sensor = None
         self.camera_manager = None
+
         self.restart()
 
     def restart(self):
         """Restart the world"""
-        # Keep same camera config if the camera manager exists.
-        cam_index = self.camera_manager.index if self.camera_manager is not None else 0
-        cam_pos_id = self.camera_manager.transform_index if self.camera_manager is not None else 0
+        self.destroy()
 
-        # Get a random blueprint.
-        blueprint = random.choice(self.world.get_blueprint_library().filter("model3"))
-        blueprint.set_attribute('role_name', 'hero')
-        if blueprint.has_attribute('color'):
-            color = random.choice(blueprint.get_attribute('color').recommended_values)
-            blueprint.set_attribute('color', color)
+        # Spawn the agent.
+        self.agent = CustomAgent(self)
 
-        # Spawn the player.
-        if self.player is not None:
-            # TODO transformation ändern, so wie es in den verschiedenen tutorials gemacht wird
-            spawn_point = self.player.get_transform()
-            spawn_point.location.z += 2.0
-            spawn_point.rotation.roll = 0.0
-            spawn_point.rotation.pitch = 0.0
-            self.destroy()
-            self.player = self.world.try_spawn_actor(blueprint, spawn_point)
-            self.modify_vehicle_physics(self.player)
-
-        print(self.world.get_blueprint_library)
-
-        while self.player is None:
-            if not self.map.get_spawn_points():
-                print('There are no spawn points available in your map/town.')
-                print('Please add some Vehicle Spawn Point to your UE4 scene.')
-                sys.exit(1)
-            spawn_points = self.map.get_spawn_points()
-            spawn_point = random.choice(spawn_points) if spawn_points else carla.Transform()
-            self.player = self.world.try_spawn_actor(blueprint, spawn_point)
-            self.modify_vehicle_physics(self.player)
-
-        a = CustomAgent(self)
         self.world.wait_for_tick()
 
         # Set up the sensors.
-        self.collision_sensor = CollisionSensor(self.player)
-        self.gnss_sensor = GnssSensor(self.player)
-        self.camera_manager = CameraManager(self.player)
-        self.camera_manager.transform_index = cam_pos_id
-        self.camera_manager.set_sensor(cam_index)
-
-        # manipulate the actor in the simulation
-        self.randomly_control_actor()
-
-    def randomly_control_actor(self):
-        pass
-
-    def modify_vehicle_physics(self, actor):
-        # If actor is not a vehicle, we cannot use the physics control
-        try:
-            physics_control = actor.get_physics_control()
-            physics_control.use_sweep_wheel_collision = True
-            actor.apply_physics_control(physics_control)
-        except Exception:
-            pass
+        self.collision_sensor = CollisionSensor(self.agent.actor)
+        self.gnss_sensor = GnssSensor(self.agent.actor)
+        self.camera_manager = CameraManager(self.agent.actor)
+        self.camera_manager.transform_index = 0
+        self.camera_manager.set_sensor(0)
 
     def render(self, display):
         """Render world"""
         self.camera_manager.render(display)
 
-    def destroy_sensors(self):
-        """Destroy sensors"""
-        self.camera_manager.sensor.destroy()
-        self.camera_manager.sensor = None
-        self.camera_manager.index = None
-
     def destroy(self):
         """Destroys all actors"""
         actors = [
-            self.camera_manager.sensor,
-            self.gnss_sensor.sensor,
-            self.collision_sensor.sensor,
-            self.player]
+            self.camera_manager,
+            self.gnss_sensor,
+            self.collision_sensor,
+            self.agent]
         for actor in actors:
             if actor is not None:
                 actor.destroy()
@@ -190,19 +115,50 @@ class World(object):
 # ==============================================================================
 
 class CustomAgent:
-    def __init__(self, world):
-        self.player = None # irgendwas aus blueprint library - vlt model3
+    def __init__(self, world: World):
+        # the car actually driving around in the simulation
+        self.actor = None
+        self.world = world
 
-        if isinstance(world.player, carla.Vehicle):
-            self._control = carla.VehicleControl()
-            self._lights = carla.VehicleLightState.NONE
-            world.player.set_autopilot(True)
+        # the model of the car driving around
+        self.blueprint = random.choice(self.world.world.get_blueprint_library().filter("model3"))
+        self.blueprint.set_attribute('role_name', 'hero')
+
+        # spawn point of the car
+        spawn_points = self.world.map.get_spawn_points()
+        if spawn_points is None:
+            print('There are no spawn points available in your map/town.')
+            print('Please add some Vehicle Spawn Point to your UE4 scene.')
+            sys.exit(1)
+        self.spawn_point = random.choice(spawn_points)
+
+        self.spawn_actor()
+
+    def spawn_actor(self):
+        if self.actor is not None:
+            self.destroy()
+
+        self.actor = self.world.world.try_spawn_actor(self.blueprint, self.spawn_point)
+        self.modify_vehicle_physics()
+        # self.actor.set_autopilot(True)
+
+        self.actor.apply_control(carla.VehicleControl(throttle=1.0, steer=0.0))
+
+    def modify_vehicle_physics(self):
+        try:
+            physics_control = self.actor.get_physics_control()
+            physics_control.use_sweep_wheel_collision = True
+            self.actor.apply_physics_control(physics_control)
+        except Exception:
+            pass
+
+    def destroy(self):
+        self.actor.destroy()
 
 
 # ==============================================================================
 # -- CollisionSensor -----------------------------------------------------------
 # ==============================================================================
-
 
 class CollisionSensor(object):
     """ Class for collision sensors"""
@@ -212,20 +168,17 @@ class CollisionSensor(object):
         self.sensor = None
         self.history = []
         self._parent = parent_actor
+
         world = self._parent.get_world()
         blueprint = world.get_blueprint_library().find('sensor.other.collision')
-        self.sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=self._parent)
+        self.sensor = world.spawn_actor(blueprint, carla.Transform())
         # We need to pass the lambda a weak reference to
         # self to avoid circular reference.
         weak_self = weakref.ref(self)
         self.sensor.listen(lambda event: CollisionSensor._on_collision(weak_self, event))
 
-    def get_collision_history(self):
-        """Gets the history of collisions"""
-        history = collections.defaultdict(int)
-        for frame, intensity in self.history:
-            history[frame] += intensity
-        return history
+    def destroy(self):
+        self.sensor.destroy()
 
     @staticmethod
     def _on_collision(weak_self, event):
@@ -233,7 +186,6 @@ class CollisionSensor(object):
         self = weak_self()
         if not self:
             return
-        actor_type = get_actor_display_name(event.other_actor)
         impulse = event.normal_impulse
         intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
         self.history.append((event.frame, intensity))
@@ -244,7 +196,6 @@ class CollisionSensor(object):
 # ==============================================================================
 # -- GnssSensor --------------------------------------------------------
 # ==============================================================================
-
 
 class GnssSensor(object):
     """ Class for GNSS sensors"""
@@ -264,6 +215,9 @@ class GnssSensor(object):
         weak_self = weakref.ref(self)
         self.sensor.listen(lambda event: GnssSensor._on_gnss_event(weak_self, event))
 
+    def destroy(self):
+        self.sensor.destroy()
+
     @staticmethod
     def _on_gnss_event(weak_self, event):
         """GNSS method"""
@@ -277,7 +231,6 @@ class GnssSensor(object):
 # ==============================================================================
 # -- CameraManager -------------------------------------------------------------
 # ==============================================================================
-
 
 class CameraManager(object):
     """ Class for camera management"""
@@ -320,6 +273,11 @@ class CameraManager(object):
             elif item[0].startswith('sensor.lidar'):
                 blp.set_attribute('range', '50')
             item.append(blp)
+        self.index = None
+
+    def destroy(self):
+        self.sensor.destroy()
+        self.sensor = None
         self.index = None
 
     def toggle_camera(self):
@@ -389,7 +347,6 @@ class CameraManager(object):
 # -- Game Loop ---------------------------------------------------------
 # ==============================================================================
 
-
 def game_loop():
     """
     Main loop of the simulation.
@@ -401,7 +358,7 @@ def game_loop():
 
     try:
         client = carla.Client(PORT, HOST)
-        client.set_timeout(10.0)
+        client.set_timeout(5.0)
 
         sim_world = client.get_world()
 
@@ -413,10 +370,14 @@ def game_loop():
 
         running = True
         while running:
-            # stop the simulation
+            # handle key events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        world.restart()
+
             if not running:
                 break
 
@@ -437,7 +398,6 @@ def game_loop():
 # -- main() --------------------------------------------------------------
 # ==============================================================================
 
-
 def main():
     """Main method"""
 
@@ -449,7 +409,7 @@ def main():
         game_loop()
 
     except KeyboardInterrupt:
-        print('\nCancelled by user. Bye!')
+        print('\nCancelled by user.')
 
 
 if __name__ == '__main__':
