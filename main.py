@@ -21,6 +21,11 @@ try:
 except ImportError:
     raise RuntimeError('cannot import numpy, make sure numpy package is installed')
 
+try:
+    import cv2
+except ImportError:
+    raise RuntimeError('cannot import opencv, make sure opencv-python package is installed')
+
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
 # ==============================================================================
@@ -71,7 +76,8 @@ class World(object):
             print('  The server could not send the OpenDRIVE (.xodr) file:')
             print('  Make sure it exists, has the same name of your town, and is correct.')
             sys.exit(1)
-        self.agent = None
+
+        self.agent = CustomAgent(self)
         self.collision_sensor = None
         self.gnss_sensor = None
         self.camera_manager = None
@@ -80,10 +86,11 @@ class World(object):
 
     def restart(self):
         """Restart the world"""
+        # clean up old objects
         self.destroy()
 
-        # Spawn the agent.
-        self.agent = CustomAgent(self)
+        # spawn the actor
+        self.agent.spawn_actor()
 
         self.world.wait_for_tick()
 
@@ -92,7 +99,9 @@ class World(object):
         self.gnss_sensor = GnssSensor(self.agent.actor)
         self.camera_manager = CameraManager(self.agent.actor)
         self.camera_manager.transform_index = 0
-        self.camera_manager.set_sensor(0)
+
+        # right now 0 is rgb camera, 2 is semantic segmentation
+        self.camera_manager.set_sensor(2)
 
     def render(self, display):
         """Render world"""
@@ -132,13 +141,9 @@ class CustomAgent:
             sys.exit(1)
         self.spawn_point = random.choice(spawn_points)
 
-        self.spawn_actor()
-
     def spawn_actor(self):
-        if self.actor is not None:
-            self.destroy()
-
         self.actor = self.world.world.try_spawn_actor(self.blueprint, self.spawn_point)
+
         self.modify_vehicle_physics()
         # self.actor.set_autopilot(True)
 
@@ -147,13 +152,16 @@ class CustomAgent:
     def modify_vehicle_physics(self):
         try:
             physics_control = self.actor.get_physics_control()
-            physics_control.use_sweep_wheel_collision = True
+            physics_control.use_gear_autobox(True)
+            # physics_control.use_sweep_wheel_collision = True
+
             self.actor.apply_physics_control(physics_control)
         except Exception:
             pass
 
     def destroy(self):
-        self.actor.destroy()
+        if self.actor is not None:
+            self.actor.destroy()
 
 
 # ==============================================================================
@@ -178,7 +186,8 @@ class CollisionSensor(object):
         self.sensor.listen(lambda event: CollisionSensor._on_collision(weak_self, event))
 
     def destroy(self):
-        self.sensor.destroy()
+        if self.sensor is not None:
+            self.sensor.destroy()
 
     @staticmethod
     def _on_collision(weak_self, event):
@@ -216,7 +225,8 @@ class GnssSensor(object):
         self.sensor.listen(lambda event: GnssSensor._on_gnss_event(weak_self, event))
 
     def destroy(self):
-        self.sensor.destroy()
+        if self.sensor is not None:
+            self.sensor.destroy()
 
     @staticmethod
     def _on_gnss_event(weak_self, event):
@@ -240,29 +250,20 @@ class CameraManager(object):
         self.sensor = None
         self.surface = None
         self._parent = parent_actor
-        bound_y = 0.5 + self._parent.bounding_box.extent.y
         attachment = carla.AttachmentType
-        self._camera_transforms = [
-            (carla.Transform(
-                carla.Location(x=-5.5, z=2.5), carla.Rotation(pitch=8.0)), attachment.SpringArm),
-            (carla.Transform(
-                carla.Location(x=1.6, z=1.7)), attachment.Rigid),
-            (carla.Transform(
-                carla.Location(x=5.5, y=1.5, z=1.5)), attachment.SpringArm),
-            (carla.Transform(
-                carla.Location(x=-8.0, z=6.0), carla.Rotation(pitch=6.0)), attachment.SpringArm),
-            (carla.Transform(
-                carla.Location(x=-1, y=-bound_y, z=0.5)), attachment.Rigid)]
-        self.transform_index = 1
+
+        # transform for camera. POV of the vehicle
+        self._camera_transform = (carla.Transform(
+            carla.Location(x=2, z=1)), attachment.Rigid)
+
+        # sensors for this camera manager
         self.sensors = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
-            ['sensor.camera.depth', cc.Raw, 'Camera Depth (Raw)'],
-            ['sensor.camera.depth', cc.Depth, 'Camera Depth (Gray Scale)'],
             ['sensor.camera.depth', cc.LogarithmicDepth, 'Camera Depth (Logarithmic Gray Scale)'],
-            ['sensor.camera.semantic_segmentation', cc.Raw, 'Camera Semantic Segmentation (Raw)'],
             ['sensor.camera.semantic_segmentation', cc.CityScapesPalette,
-             'Camera Semantic Segmentation (CityScapes Palette)'],
-            ['sensor.lidar.ray_cast', None, 'Lidar (Ray-Cast)']]
+             'Camera Semantic Segmentation (CityScapes Palette)']]
+
+        # get the blueprints for the sensors
         world = self._parent.get_world()
         bp_library = world.get_blueprint_library()
         for item in self.sensors:
@@ -272,18 +273,17 @@ class CameraManager(object):
                 blp.set_attribute('image_size_y', str(HEIGHT))
             elif item[0].startswith('sensor.lidar'):
                 blp.set_attribute('range', '50')
+                blp.set_attribute('channels', '50')
+                blp.set_attribute('rotation_frequency', '10')
             item.append(blp)
+
         self.index = None
 
     def destroy(self):
-        self.sensor.destroy()
+        if self.sensor is not None:
+            self.sensor.destroy()
         self.sensor = None
         self.index = None
-
-    def toggle_camera(self):
-        """Activate a camera"""
-        self.transform_index = (self.transform_index + 1) % len(self._camera_transforms)
-        self.set_sensor(self.index, force_respawn=True)
 
     def set_sensor(self, index, force_respawn=False):
         """Set a sensor"""
@@ -294,22 +294,19 @@ class CameraManager(object):
             if self.sensor is not None:
                 self.sensor.destroy()
                 self.surface = None
-            self.sensor = self._parent.get_world().spawn_actor(
-                self.sensors[index][-1],
-                self._camera_transforms[self.transform_index][0],
-                attach_to=self._parent,
-                attachment_type=self._camera_transforms[self.transform_index][1])
 
-            # We need to pass the lambda a weak reference to
-            # self to avoid circular reference.
+            # spawn the camera and attach it to the parent vehicle
+            self.sensor = self._parent.get_world() \
+                .spawn_actor(self.sensors[index][-1],
+                             self._camera_transform[0],
+                             attach_to=self._parent,
+                             attachment_type=self._camera_transform[-1])
+
+            # We need to pass the lambda a weak reference to self to avoid circular reference.
             weak_self = weakref.ref(self)
             self.sensor.listen(lambda image: CameraManager._parse_image(weak_self, image))
 
         self.index = index
-
-    def next_sensor(self):
-        """Get the next sensor"""
-        self.set_sensor(self.index + 1)
 
     def render(self, display):
         """Render method"""
@@ -322,6 +319,7 @@ class CameraManager(object):
         if not self:
             return
         if self.sensors[self.index][0].startswith('sensor.lidar'):
+
             points = np.frombuffer(image.raw_data, dtype=np.dtype('f4'))
             points = np.reshape(points, (int(points.shape[0] / 4), 4))
             lidar_data = np.array(points[:, :2])
@@ -336,11 +334,44 @@ class CameraManager(object):
             self.surface = pygame.surfarray.make_surface(lidar_img)
         else:
             image.convert(self.sensors[self.index][1])
-            array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
-            array = np.reshape(array, (image.height, image.width, 4))
-            array = array[:, :, :3]
-            array = array[:, :, ::-1]
-            self.surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
+            img = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+            img = np.reshape(img, (image.height, image.width, 4))
+            img = img[:, :, :3]
+            img = img[:, :, ::-1]
+
+            height, width, channels = img.shape
+            img_output = np.zeros((height, width, 3), np.uint8)
+
+            # create masked black and white image where only the street is visible
+
+            # cv2 uses BRG, so when using cv2 the tuple has to be reversed.
+            # CARLA uses RGB, so the tuple can be as is.
+
+            # color of lane marking (157, 234, 50)
+            lower_mask = np.array([147, 224, 40])
+            upper_mask = np.array([167, 244, 60])
+            masked_marking = cv2.inRange(img, lower_mask, upper_mask)
+
+            # color of the street (128, 64, 128)
+            lower_mask = np.array([118, 54, 118])
+            upper_mask = np.array([138, 74, 138])
+            masked_street = cv2.inRange(img, lower_mask, upper_mask)
+
+            masked_image = cv2.bitwise_or(masked_marking, masked_street)
+
+            # find the contour with the largest area which is the street
+            contours, _ = cv2.findContours(masked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+            street, largest_area = None, 0
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if area > largest_area:
+                    largest_area = area
+                    street = contour
+
+            cv2.drawContours(img_output, street, -1, (255, 255, 255), 1)
+
+            self.surface = pygame.surfarray.make_surface(img_output.swapaxes(0, 1))
 
 
 # ==============================================================================
