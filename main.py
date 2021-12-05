@@ -97,11 +97,9 @@ class World(object):
         # Set up the sensors.
         self.collision_sensor = CollisionSensor(self.agent.actor)
         self.gnss_sensor = GnssSensor(self.agent.actor)
-        self.camera_manager = CameraManager(self.agent.actor)
-        self.camera_manager.transform_index = 0
+        self.camera_manager = CameraManager(self.agent.actor, debug=True)
 
-        # right now 0 is rgb camera, 2 is semantic segmentation
-        self.camera_manager.set_sensor(2)
+        self.camera_manager.spawn_cameras()
 
     def render(self, display):
         """Render world"""
@@ -245,21 +243,32 @@ class GnssSensor(object):
 class CameraManager(object):
     """ Class for camera management"""
 
-    def __init__(self, parent_actor):
-        """Constructor method"""
-        self.sensor = None
-        self.surface = None
-        self._parent = parent_actor
-        attachment = carla.AttachmentType
+    def __init__(self, parent_actor, debug: bool = False):
+        """
+        Constructor Method
+        :param parent_actor: the actor the cameras are attached to
+        :param debug: information whether the camera manager should go into debug mode, showing multiple cameras at a time
+        """
+        self.rgb_camera = None
+        self.sem_seg_camera = None
+        self.rgb_surface = None
+        self.sem_seg_surface = None
+        self.lane_detection_surface = None
 
-        # transform for camera. POV of the vehicle
-        self._camera_transform = (carla.Transform(
-            carla.Location(x=2, z=1)), attachment.Rigid)
+        self.debug = debug
+        self._parent = parent_actor
+
+        # transforms for camera
+        # first person
+        self._camera_transform_fp = (carla.Transform(
+            carla.Location(x=2, z=1)), carla.AttachmentType.Rigid)
+        # third person
+        self._camera_transform_tp = (carla.Transform(
+            carla.Location(x=-5.5, z=2.5)), carla.AttachmentType.Rigid)
 
         # sensors for this camera manager
         self.sensors = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
-            ['sensor.camera.depth', cc.LogarithmicDepth, 'Camera Depth (Logarithmic Gray Scale)'],
             ['sensor.camera.semantic_segmentation', cc.CityScapesPalette,
              'Camera Semantic Segmentation (CityScapes Palette)']]
 
@@ -267,111 +276,144 @@ class CameraManager(object):
         world = self._parent.get_world()
         bp_library = world.get_blueprint_library()
         for item in self.sensors:
-            blp = bp_library.find(item[0])
+            bp = bp_library.find(item[0])
             if item[0].startswith('sensor.camera'):
-                blp.set_attribute('image_size_x', str(WIDTH))
-                blp.set_attribute('image_size_y', str(HEIGHT))
+                bp.set_attribute('image_size_x', str(WIDTH))
+                bp.set_attribute('image_size_y', str(HEIGHT))
             elif item[0].startswith('sensor.lidar'):
-                blp.set_attribute('range', '50')
-                blp.set_attribute('channels', '50')
-                blp.set_attribute('rotation_frequency', '10')
-            item.append(blp)
-
-        self.index = None
+                bp.set_attribute('range', '50')
+                bp.set_attribute('channels', '50')
+                bp.set_attribute('rotation_frequency', '10')
+            item.append(bp)
 
     def destroy(self):
-        if self.sensor is not None:
-            self.sensor.destroy()
-        self.sensor = None
-        self.index = None
+        """Destroy the sensors in the simulation."""
+        if self.sem_seg_camera is not None:
+            self.sem_seg_camera.destroy()
+        self.sem_seg_camera = None
 
-    def set_sensor(self, index, force_respawn=False):
-        """Set a sensor"""
-        index = index % len(self.sensors)
-        needs_respawn = True if self.index is None else (
-                force_respawn or (self.sensors[index][0] != self.sensors[self.index][0]))
-        if needs_respawn:
-            if self.sensor is not None:
-                self.sensor.destroy()
-                self.surface = None
+        if self.debug:
+            if self.rgb_camera is not None:
+                self.rgb_camera.destroy()
+            self.rgb_camera = None
 
-            # spawn the camera and attach it to the parent vehicle
-            self.sensor = self._parent.get_world() \
-                .spawn_actor(self.sensors[index][-1],
-                             self._camera_transform[0],
+    def spawn_cameras(self):
+        """
+        Spawn the cameras in the simulation.
+        Spawns only the semantic segmentation camera in normal mode and an additional rgb camera in debug mode
+        """
+        if self.sem_seg_camera is None:
+            self.destroy()
+            self.rgb_surface = None
+            self.sem_seg_surface = None
+            self.lane_detection_surface = None
+
+        # We need to pass the lambda a weak reference to self to avoid circular reference.
+        weak_self = weakref.ref(self)
+
+        if self.debug:
+            self.rgb_camera = self._parent.get_world() \
+                .spawn_actor(self.sensors[0][-1],
+                             self._camera_transform_tp[0],
                              attach_to=self._parent,
-                             attachment_type=self._camera_transform[-1])
+                             attachment_type=self._camera_transform_tp[-1])
+            self.rgb_camera.listen(lambda image: CameraManager._parse_image(weak_self, image, 0))
 
-            # We need to pass the lambda a weak reference to self to avoid circular reference.
-            weak_self = weakref.ref(self)
-            self.sensor.listen(lambda image: CameraManager._parse_image(weak_self, image))
-
-        self.index = index
+        self.sem_seg_camera = self._parent.get_world() \
+            .spawn_actor(self.sensors[1][-1],
+                         self._camera_transform_fp[0],
+                         attach_to=self._parent,
+                         attachment_type=self._camera_transform_fp[-1])
+        self.sem_seg_camera.listen(lambda image: CameraManager._parse_image(weak_self, image, 1))
 
     def render(self, display):
-        """Render method"""
-        if self.surface is not None:
-            display.blit(self.surface, (0, 0))
+        """Render camera images.
+        debug mode:
+            Top Left: RGB image
+            Top Right: Semantic Segmentation image
+            Bottom Left: Lane Edges
+        normal mode:
+            only lane Edges
+        """
+        if self.debug:
+            if all([surface is not None for surface in
+                    [self.rgb_surface, self.sem_seg_surface, self.lane_detection_surface]]):
+                display.blit(self.rgb_surface, (0, 0))
+                display.blit(self.sem_seg_surface, (WIDTH / 2, 0))
+                display.blit(self.lane_detection_surface, (0, HEIGHT / 2))
+
+        else:
+            if self.lane_detection_surface is not None:
+                display.blit(self.lane_detection_surface, (0, 0))
 
     @staticmethod
-    def _parse_image(weak_self, image):
+    def _parse_image(weak_self, image, number):
+        """Set the captured image of the selected camera as the surface to be displayed."""
         self = weak_self()
         if not self:
             return
-        if self.sensors[self.index][0].startswith('sensor.lidar'):
 
-            points = np.frombuffer(image.raw_data, dtype=np.dtype('f4'))
-            points = np.reshape(points, (int(points.shape[0] / 4), 4))
-            lidar_data = np.array(points[:, :2])
-            lidar_data *= min((WIDTH, HEIGHT)) / 100.0
-            lidar_data += (0.5 * WIDTH, 0.5 * HEIGHT)
-            lidar_data = np.fabs(lidar_data)
-            lidar_data = lidar_data.astype(np.int32)
-            lidar_data = np.reshape(lidar_data, (-1, 2))
-            lidar_img_size = (WIDTH, HEIGHT, 3)
-            lidar_img = np.zeros(lidar_img_size)
-            lidar_img[tuple(lidar_data.T)] = (255, 255, 255)
-            self.surface = pygame.surfarray.make_surface(lidar_img)
+        image.convert(self.sensors[number][1])
+        img = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
+        img = np.reshape(img, (image.height, image.width, 4))
+        img = img[:, :, :3]
+        img = img[:, :, ::-1]
+
+        if self.debug:
+            # scale down image in debug mode to show multiple at the same time
+            d_size = (int(WIDTH / 2), int(HEIGHT / 2))
+            img = cv2.resize(img, d_size)
+
+            if number == 0:
+                self.rgb_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
+            elif number == 1:
+                self.sem_seg_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
+                img = lane_detection_from_sem_seg(img)
+                self.lane_detection_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
+
         else:
-            image.convert(self.sensors[self.index][1])
-            img = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
-            img = np.reshape(img, (image.height, image.width, 4))
-            img = img[:, :, :3]
-            img = img[:, :, ::-1]
+            img = lane_detection_from_sem_seg(img)
+            self.lane_detection_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
 
-            height, width, channels = img.shape
-            img_output = np.zeros((height, width, 3), np.uint8)
 
-            # create masked black and white image where only the street is visible
+def lane_detection_from_sem_seg(img):
+    """
+    Convert a semantic segmentation image into a black and white image where only the contours of the road are highlighted.
+    :param img: the image returned form the semantic segmentation camera
+    :return: a black and shite image containing the road edges
+    """
+    height, width, channels = img.shape
+    img_output = np.zeros((height, width, 3), np.uint8)
 
-            # cv2 uses BRG, so when using cv2 the tuple has to be reversed.
-            # CARLA uses RGB, so the tuple can be as is.
+    # cv2 uses BRG, so when using cv2 the tuple has to be reversed.
+    # CARLA uses RGB, so the tuple can be as is.
 
-            # color of lane marking (157, 234, 50)
-            lower_mask = np.array([147, 224, 40])
-            upper_mask = np.array([167, 244, 60])
-            masked_marking = cv2.inRange(img, lower_mask, upper_mask)
+    # color of lane marking (157, 234, 50)
+    lower_mask = np.array([147, 224, 40])
+    upper_mask = np.array([167, 244, 60])
+    masked_marking = cv2.inRange(img, lower_mask, upper_mask)
 
-            # color of the street (128, 64, 128)
-            lower_mask = np.array([118, 54, 118])
-            upper_mask = np.array([138, 74, 138])
-            masked_street = cv2.inRange(img, lower_mask, upper_mask)
+    # color of the street (128, 64, 128)
+    lower_mask = np.array([118, 54, 118])
+    upper_mask = np.array([138, 74, 138])
+    masked_street = cv2.inRange(img, lower_mask, upper_mask)
 
-            masked_image = cv2.bitwise_or(masked_marking, masked_street)
+    masked_image = cv2.bitwise_or(masked_marking, masked_street)
 
-            # find the contour with the largest area which is the street
-            contours, _ = cv2.findContours(masked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    # find the contour with the largest area which is the street
+    contours, _ = cv2.findContours(masked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-            street, largest_area = None, 0
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area > largest_area:
-                    largest_area = area
-                    street = contour
+    street, largest_area = None, 0
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > largest_area:
+            largest_area = area
+            street = contour
 
-            cv2.drawContours(img_output, street, -1, (255, 255, 255), 1)
+    cv2.drawContours(img_output, street, -1, (255, 255, 255), 1)
+    img_output = cv2.cvtColor(img_output, cv2.COLOR_BGR2GRAY)
 
-            self.surface = pygame.surfarray.make_surface(img_output.swapaxes(0, 1))
+    return img_output
 
 
 # ==============================================================================
