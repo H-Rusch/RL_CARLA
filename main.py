@@ -93,10 +93,11 @@ EPISODES = 100
 
 DISCOUNT = 0.99
 epsilon = 1
-EPSILON_DECAY = 0.95 ## 0.9975 99975
+EPSILON_DECAY = 0.95  ## 0.9975 99975
 MIN_EPSILON = 0.001
 
 AGGREGATE_STATS_EVERY = 10
+
 
 # ==============================================================================
 # -- ModifiedTensorBoard ---------------------------------------------------------------
@@ -146,6 +147,7 @@ class ModifiedTensorBoard(TensorBoard):
                 tf.summary.scalar(key, value, step=self.step)
                 self.writer.flush()
 
+
 # ==============================================================================
 # -- CarEnvironment ---------------------------------------------------------------
 # ==============================================================================
@@ -170,7 +172,7 @@ class CarEnvironment(object):
         self.gnss_sensor = None
         self.camera_manager = None
 
-        self.restart()
+    # self.restart()
 
     def restart(self):
         """Restart the world"""
@@ -202,14 +204,14 @@ class CarEnvironment(object):
 
     def step(self, action):
         if action == 0:
-            self.vehicle.actor.apply_control(carla.VehicleControl(throttle=1.0, steer=-1*self.STEER_AMT))
+            self.vehicle.actor.apply_control(carla.VehicleControl(throttle=1.0, steer=-1 * self.STEER_AMT))
         elif action == 1:
-            self.vehicle.actor.apply_control(carla.VehicleControl(throttle=1.0, steer= 0))
+            self.vehicle.actor.apply_control(carla.VehicleControl(throttle=1.0, steer=0))
         elif action == 2:
-            self.vehicle.actor.apply_control(carla.VehicleControl(throttle=1.0, steer=1*self.STEER_AMT))
+            self.vehicle.actor.apply_control(carla.VehicleControl(throttle=1.0, steer=1 * self.STEER_AMT))
 
         v = self.vehicle.actor.get_velocity()
-        kmh = int(3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2))
+        kmh = int(3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2))
 
         if len(self.collision_sensor.history) != 0:
             done = True
@@ -266,8 +268,6 @@ class Vehicle:
         self.modify_vehicle_physics()
         # self.actor.set_autopilot(True)
 
-        self.actor.apply_control(carla.VehicleControl(throttle=1.0, steer=0.0))
-
     def modify_vehicle_physics(self):
         try:
             physics_control = self.actor.get_physics_control()
@@ -281,6 +281,8 @@ class Vehicle:
     def destroy(self):
         if self.actor is not None:
             self.actor.destroy()
+        self.actor = None
+
 
 # ==============================================================================
 # -- DQNAgent ------------------------------------------------------------------
@@ -296,7 +298,7 @@ class DQNAgent:
 
         self.tensorboard = ModifiedTensorBoard(log_dir=f"logs/{MODEL_NAME}-{int(time.time())}")
         self.target_update_counter = 0
-        #self.graph = tf.get_default_graph()
+        # self.graph = tf.get_default_graph()
 
         self.terminate = False
         self.last_logged_episode = 0
@@ -323,12 +325,12 @@ class DQNAgent:
 
         minibatch = random.sample(self.replay_memory, MINIBATCH_SIZE)
 
-        current_states = np.array([transition[0] for transition in minibatch])/255
-        #with self.graph.as_default():
+        current_states = np.array([transition[0] for transition in minibatch]) / 255
+        # with self.graph.as_default():
         current_qs_list = self.model.predict(current_states, PREDICTION_BATCH_SIZE)
 
-        new_current_states = np.array([transition[3] for transition in minibatch])/255
-        #with self.graph.as_default():
+        new_current_states = np.array([transition[3] for transition in minibatch]) / 255
+        # with self.graph.as_default():
         future_qs_list = self.target_model.predict(new_current_states, PREDICTION_BATCH_SIZE)
 
         X = []
@@ -352,9 +354,9 @@ class DQNAgent:
             log_this_step = True
             self.last_log_episode = self.tensorboard.step
 
-        #with self.graph.as_default():
-        self.model.fit(np.array(X)/255, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0, shuffle=False, callbacks=[self.tensorboard] if log_this_step else None)
-
+        # with self.graph.as_default():
+        self.model.fit(np.array(X) / 255, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0, shuffle=False,
+                       callbacks=[self.tensorboard] if log_this_step else None)
 
         if log_this_step:
             self.target_update_counter += 1
@@ -364,13 +366,13 @@ class DQNAgent:
             self.target_update_counter = 0
 
     def get_qs(self, state):
-        return self.model.predict(np.array(state).reshape(-1, *state.shape)/255)[0]
+        return self.model.predict(np.array(state).reshape(-1, *state.shape) / 255)[0]
 
     def train_in_loop(self):
         X = np.random.uniform(size=(1, IM_HEIGHT, IM_WIDTH, 3)).astype(np.float32)
         y = np.random.uniform(size=(1, 3)).astype(np.float32)
-        #with self.graph.as_default():
-        self.model.fit(X,y, verbose=False, batch_size=1)
+        # with self.graph.as_default():
+        self.model.fit(X, y, verbose=False, batch_size=1)
 
         self.training_initialized = True
 
@@ -379,6 +381,7 @@ class DQNAgent:
                 return
             self.train()
             time.sleep(0.01)
+
 
 # ==============================================================================
 # -- CollisionSensor -----------------------------------------------------------
@@ -394,18 +397,16 @@ class CollisionSensor(object):
         self._parent = parent_actor
         world = self._parent.get_world()
         blueprint = world.get_blueprint_library().find('sensor.other.collision')
-        self.sensor = world.spawn_actor(blueprint, carla.Transform())
-        # We need to pass the lambda a weak reference to
-        # self to avoid circular reference.
-        weak_self = weakref.ref(self)
-        self.sensor.listen(lambda event: CollisionSensor._on_collision(weak_self, event))
+        self.sensor = world.spawn_actor(blueprint, carla.Transform(), attach_to=parent_actor)
+
+        self.sensor.listen(lambda event: self.on_collision(event))
 
     def destroy(self):
         if self.sensor is not None:
             self.sensor.destroy()
+        self.sensor = None
 
-    @staticmethod
-    def _on_collision(weak_self, event):
+    def on_collision(self, event):
         """On collision method"""
         impulse = event.normal_impulse
         intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
@@ -439,6 +440,7 @@ class GnssSensor(object):
     def destroy(self):
         if self.sensor is not None:
             self.sensor.destroy()
+        self.sensor = None
 
     @staticmethod
     def _on_gnss_event(weak_self, event):
@@ -465,6 +467,9 @@ class CameraManager(object):
         """
         self.rgb_camera = None
         self.sem_seg_camera = None
+
+        self.lane_detection_img = None
+
         self.rgb_surface = None
         self.sem_seg_surface = None
         self.lane_detection_surface = None
@@ -587,6 +592,7 @@ class CameraManager(object):
 
         else:
             img = lane_detection_from_sem_seg(img)
+            self.lane_detection_img = img
             self.lane_detection_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
 
 
@@ -625,7 +631,7 @@ def lane_detection_from_sem_seg(img):
             street = contour
 
     cv2.drawContours(img_output, street, -1, (255, 255, 255), 1)
-    img_output = cv2.cvtColor(img_output, cv2.COLOR_BGR2GRAY)
+    # img_output = cv2.cvtColor(img_output, cv2.COLOR_BGR2GRAY)
 
     return img_output
 
@@ -640,8 +646,8 @@ def game_loop():
     """
     global epsilon
 
-    #pygame.init()
-    #pygame.font.init()
+    # pygame.init()
+    # pygame.font.init()
     carEnv = None
 
     FPS = 60
@@ -654,7 +660,7 @@ def game_loop():
 
         sim_world = client.get_world()
 
-        display = pygame.display.set_mode((WIDTH, HEIGHT), pygame.HWSURFACE | pygame.DOUBLEBUF)
+        # display = pygame.display.set_mode((WIDTH, HEIGHT), pygame.HWSURFACE | pygame.DOUBLEBUF)
 
         carEnv = CarEnvironment(sim_world)
         agent = DQNAgent()
@@ -765,7 +771,7 @@ def game_loop():
         if carEnv is not None:
             carEnv.destroy()
 
-        #pygame.quit()
+        # pygame.quit()
 
 
 # ==============================================================================
