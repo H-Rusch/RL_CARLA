@@ -312,7 +312,7 @@ if __name__ == '__main__':
     while not agent.training_initialized:
         time.sleep(0.01)
 
-    # Initialize predictions - forst prediction takes longer as of initialization that has to be done
+    # Initialize predictions - first prediction takes longer as of initialization that has to be done
     # It's better to do a first prediction then before we start iterating over episode steps
     agent.get_qs(np.ones((env.im_height, env.im_width, 3)))
 
