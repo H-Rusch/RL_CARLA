@@ -1,4 +1,5 @@
 from __future__ import print_function
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
 import glob
 import logging
@@ -89,7 +90,7 @@ UPDATE_TARGET_EVERY = 5
 MODEL_NAME = "Xception"
 
 MEMORY_FRACTION = 0.4
-MIN_REWARD = -200
+MIN_REWARD = -1
 
 EPISODES = 100
 
@@ -330,6 +331,7 @@ class CarEnvironment(object):
         for actor in actors:
             if actor is not None:
                 actor.destroy()
+                time.sleep(0.01)
 
 
 # ==============================================================================
@@ -354,10 +356,18 @@ class Vehicle:
             print('There are no spawn points available in your map/town.')
             print('Please add some Vehicle Spawn Point to your UE4 scene.')
             sys.exit(1)
+        numpy_random.seed(1)
         self.spawn_point = numpy_random.choice(spawn_points)
+        print(str(self.spawn_point))
 
     def spawn_actor(self):
-        self.actor = self.world.world.try_spawn_actor(self.blueprint, self.spawn_point)
+        try:
+            self.actor = self.world.world.spawn_actor(self.blueprint, self.spawn_point)
+        except RuntimeError as e:
+            print("Runtime Error")
+        except BaseException as e:
+            print("Oops")
+            print(e)
 
     def execute_action(self, action):
         """
@@ -645,7 +655,8 @@ def learn_loop():
             time.sleep(0.01)
 
         agent.get_qs(np.ones((HEIGHT, WIDTH, 3)))
-
+        
+        
         for episode in tqdm(range(1, EPISODES + 1), ascii=True, unit='episodes'):
 
             # Update tensorboard step every episode
@@ -709,6 +720,8 @@ def learn_loop():
                 epsilon *= EPSILON_DECAY
                 epsilon = max(MIN_EPSILON, epsilon)
 
+            print(str(episode_reward) + " :Reward|Epsilon: " + str(epsilon))
+            
         # Set termination flag for training thread and wait for it to finish
         agent.terminate = True
         trainer_thread.join()
