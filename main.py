@@ -353,7 +353,7 @@ class Vehicle:
 
         # spawn point of the car
         x, y, z = SPAWN_LOCATION
-        self.spawn_point = self.world.map.get_waypoint(carla.Location(x=x, y=y, z=z))
+        self.spawn_point = carla.Transform(carla.Location(x=x, y=y, z=z), carla.Rotation(yaw=180))
         print(str(self.spawn_point))
 
     def spawn_actor(self):
