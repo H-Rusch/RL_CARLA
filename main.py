@@ -1,10 +1,11 @@
 from __future__ import print_function
+import os
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
 import glob
 import logging
 import math
-import os
 import numpy.random as numpy_random
 import sys
 import weakref
@@ -77,6 +78,7 @@ HEIGHT = 480
 FOV = 110
 
 SHOW_IMAGE = False
+SPAWN_LOCATION = (79.19, 302.39, 2.0)
 
 IM_WIDTH = 640
 IM_HEIGHT = 480
@@ -350,14 +352,8 @@ class Vehicle:
         self.blueprint.set_attribute('role_name', 'hero')
 
         # spawn point of the car
-        # TODO fester punkt
-        spawn_points = self.world.map.get_spawn_points()
-        if spawn_points is None:
-            print('There are no spawn points available in your map/town.')
-            print('Please add some Vehicle Spawn Point to your UE4 scene.')
-            sys.exit(1)
-        numpy_random.seed(1)
-        self.spawn_point = numpy_random.choice(spawn_points)
+        x, y, z = SPAWN_LOCATION
+        self.spawn_point = self.world.map.get_waypoint(carla.Location(x=x, y=y, z=z))
         print(str(self.spawn_point))
 
     def spawn_actor(self):
@@ -625,6 +621,78 @@ class LaneInvasionSensor(object):
 
 
 # ==============================================================================
+# -- Checkpoint Manager  -------------------------------------------------------
+# ==============================================================================
+class CheckpointManager:
+    """
+    Class maintaining the list of checkpoints the car has to go through. The next checkpoint the car should drive to is
+    active. When a car goes through a checkpoint the next one will be selected as active.
+    """
+
+    def __init__(self):
+        self.checkpoints = []
+        self.current = 0
+
+    def init_checkpoints(self):
+        self.checkpoints.append(Checkpoint((53, 74, 300, 94), (53, 74, 308, 1)))
+        self.checkpoints.append(Checkpoint((40.56, 290.16), (47.28, 294.21)))
+        self.checkpoints.append(Checkpoint((39.88, 270.72), (47.94, 274.30)))
+        self.checkpoints.append(Checkpoint((39.65, 249.20), (47.81, 253.73)))
+        self.checkpoints.append(Checkpoint((54.45, 235.06), (60.21, 243.01)))
+        self.checkpoints.append(Checkpoint((81.25, 234.85), (60.21, 243.01)))
+        self.checkpoints.append(Checkpoint((101.19, 234.56), (105.04, 242.99)))
+        self.checkpoints.append(Checkpoint((121.11, 234.95), (125.84, 242.78)))
+        self.checkpoints.append(Checkpoint((130.34, 225.01), (138.09, 229.04)))
+        self.checkpoints.append(Checkpoint((130.26, 211.45), (138.26, 215.02)))
+        self.checkpoints.append(Checkpoint((130.03, 199.36), (138.28, 202.17)))
+        self.checkpoints.append(Checkpoint((142.63, 187.11), (146.67, 193.79)))
+        self.checkpoints.append(Checkpoint((164.83, 185.64), (158.93, 193.39)))
+        self.checkpoints.append(Checkpoint((178.83, 185.67), (183.42, 193.82)))
+        self.checkpoints.append(Checkpoint((187.23, 199.77), (193.71, 202.44)))
+        self.checkpoints.append(Checkpoint((187.68, 211.07), (195.74, 214.72)))
+        self.checkpoints.append(Checkpoint((187.50, 226.63), (195.69, 230.63)))
+        self.checkpoints.append(Checkpoint((187.71, 248.95), (195.60, 251.40)))
+        self.checkpoints.append(Checkpoint((187.79, 272.25), (195.47, 276.07)))
+        self.checkpoints.append(Checkpoint((187.70, 292.79), (195.86, 296.51)))
+        self.checkpoints.append(Checkpoint((177.23, 300.79), (182.63, 308.80)))
+        self.checkpoints.append(Checkpoint((147.25, 300.61), (152.20, 308.55)))
+        self.checkpoints.append(Checkpoint((101.82, 300.65), (106.76, 308.59)))
+        self.checkpoints.append(Checkpoint((76.28, 300.46), (80.43, 308.71)))
+
+    def reset(self):
+        self.current = 0
+
+    def check_in_current(self, position: tuple) -> bool:
+        if self.current is None:
+            return False
+
+        return self.checkpoints[self.current].is_inbounds(position)
+
+    def toggle_next(self):
+        if self.current < len(self.checkpoints):
+            self.current += 1
+
+    def check_finished(self):
+        return self.current >= len(self.checkpoints)
+
+
+# ==============================================================================
+# -- Checkpoints    ------------------------------------------------------------
+# ==============================================================================
+class Checkpoint:
+    """Class containing two points which span a checkpoints area. """
+
+    def __init__(self, p0: tuple, p1: tuple):
+        # for orientation see checkpoint overview screenshot
+        self.top_left = p0
+        self.bottom_right = p1
+
+    def is_inbounds(self, pos: tuple) -> bool:
+        return self.top_left[0] <= pos[0] <= self.bottom_right[0] and \
+               self.top_left[1] <= pos[1] <= self.bottom_right[1]
+
+
+# ==============================================================================
 # -- Game Loop ---------------------------------------------------------
 # ==============================================================================
 
@@ -655,8 +723,7 @@ def learn_loop():
             time.sleep(0.01)
 
         agent.get_qs(np.ones((HEIGHT, WIDTH, 3)))
-        
-        
+
         for episode in tqdm(range(1, EPISODES + 1), ascii=True, unit='episodes'):
 
             # Update tensorboard step every episode
@@ -721,7 +788,7 @@ def learn_loop():
                 epsilon = max(MIN_EPSILON, epsilon)
 
             print(str(episode_reward) + " :Reward|Epsilon: " + str(epsilon))
-            
+
         # Set termination flag for training thread and wait for it to finish
         agent.terminate = True
         trainer_thread.join()
