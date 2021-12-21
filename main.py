@@ -3,6 +3,9 @@ import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
+# TODO Lernalgorithmus fragt ab, ob die position im aktuellen checkpoint ist
+# TODO Lernalgorithmus fragt, ob das letzte Ziel erreicht wurde. Brind dann episode ab, gibt reward und resettet die checkpoints
+
 import glob
 import logging
 import math
@@ -262,7 +265,7 @@ class CarEnvironment(object):
     Contains the needed sensors and the vehicle.
     """
 
-    def __init__(self, carla_world):
+    def __init__(self, carla_world, checkpoint_manager: "CheckpointManager"):
         """Constructor method"""
         self.world = carla_world
         self.map = self.world.get_map()
@@ -274,6 +277,9 @@ class CarEnvironment(object):
         self.lane_invasion_sensor = None
         self.camera_manager = None
 
+        self.checkpoint_manager = checkpoint_manager
+        self.checkpoint_manager.init_checkpoints()
+
         self.episode_start = None
 
     def restart(self):
@@ -284,6 +290,8 @@ class CarEnvironment(object):
 
         # clean up old objects
         self.destroy()
+
+        self.checkpoint_manager.reset()
 
         # spawn the actor
         self.vehicle.spawn_actor()
@@ -300,7 +308,7 @@ class CarEnvironment(object):
 
         self.episode_start = time.time()
 
-        return self.camera_manager.lane_detection_img
+        return self.get_state()
 
     def step(self, action):
         # execute the action by addressing the actuators
@@ -322,7 +330,37 @@ class CarEnvironment(object):
         if self.episode_start + SECONDS_PER_EPISODE < time.time():
             done = True
 
-        return self.camera_manager.lane_detection_img, reward, done, None
+        return self.get_state(), reward, done, None
+
+    def get_state(self):
+        # current camera image
+        img = self.camera_manager.lane_detection_img
+
+        # angle and distance to the next checkpoint
+        distance, angle = self.get_next_checkpoint_state()
+
+        return img, angle, distance
+
+    def get_next_checkpoint_state(self) -> tuple:
+        vehicle_transform = self.vehicle.actor.get_transform()
+
+        checkpoint = self.checkpoint_manager.checkpoints[self.checkpoint_manager.current]
+        checkpoint_location = checkpoint.get_location()
+
+        distance = int(vehicle_transform.location.distance(checkpoint_location))
+
+        # calculate the angle between the car and the checkpoint by computing the atan2 and
+        # normalizing the angle to a value in [0, 360)
+        # 1 is 1° to the right, 359 is one ° to the left
+        c_x, c_y = checkpoint_location.x, checkpoint_location.y
+        v_x, v_y = vehicle_transform.location.x, vehicle_transform.location.y
+
+        raw_angle = math.atan2(c_y - v_y, c_x - v_x)
+        raw_angle = math.degrees(raw_angle)
+
+        angle = int((raw_angle - vehicle_transform.rotation.yaw) % 360)
+
+        return distance, angle
 
     def destroy(self):
         """Destroys all actors"""
@@ -634,7 +672,7 @@ class CheckpointManager:
         self.current = 0
 
     def init_checkpoints(self):
-        self.checkpoints.append(Checkpoint((53, 74, 300, 94), (53, 74, 308, 1)))
+        self.checkpoints.append(Checkpoint((53.74, 300.94), (53.74, 308.1)))
         self.checkpoints.append(Checkpoint((40.56, 290.16), (47.28, 294.21)))
         self.checkpoints.append(Checkpoint((39.88, 270.72), (47.94, 274.30)))
         self.checkpoints.append(Checkpoint((39.65, 249.20), (47.81, 253.73)))
@@ -691,6 +729,11 @@ class Checkpoint:
         return self.top_left[0] <= pos[0] <= self.bottom_right[0] and \
                self.top_left[1] <= pos[1] <= self.bottom_right[1]
 
+    def get_location(self) -> carla.Location:
+        """Get a location object in the middle of the checkpoint. """
+        return carla.Location(x=(self.top_left[0] + self.bottom_right[0]) / 2,
+                              y=(self.top_left[1] + self.bottom_right[1]) / 2)
+
 
 # ==============================================================================
 # -- Game Loop ---------------------------------------------------------
@@ -713,7 +756,8 @@ def learn_loop():
         sim_world = client.get_world()
 
         # create car environment in the simulator and our Reinforcement Learning agent
-        car_environment = CarEnvironment(sim_world)
+        checkpoint_manager = CheckpointManager()
+        car_environment = CarEnvironment(sim_world, checkpoint_manager)
         agent = DQNAgent()
 
         # Start training thread and wait for training to be initialized
