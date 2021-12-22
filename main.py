@@ -5,11 +5,11 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
 # TODO Lernalgorithmus fragt ab, ob die position im aktuellen checkpoint ist
 # TODO Lernalgorithmus fragt, ob das letzte Ziel erreicht wurde. Brind dann episode ab, gibt reward und resettet die checkpoints
+# TODO Zeit hochstellen, wenn durch Checkpoint gefahren
 
 import glob
 import logging
 import math
-import numpy.random as numpy_random
 import sys
 import weakref
 
@@ -351,7 +351,7 @@ class CarEnvironment(object):
 
         # calculate the angle between the car and the checkpoint by computing the atan2 and
         # normalizing the angle to a value in [0, 360)
-        # 1 is 1° to the right, 359 is one ° to the left
+        # 1 is one ° to the left, 359 is one ° to the right
         c_x, c_y = checkpoint_location.x, checkpoint_location.y
         v_x, v_y = vehicle_transform.location.x, vehicle_transform.location.y
 
@@ -399,9 +399,6 @@ class Vehicle:
             self.actor = self.world.world.spawn_actor(self.blueprint, self.spawn_point)
         except RuntimeError as e:
             print("Runtime Error")
-        except BaseException as e:
-            print("Oops")
-            print(e)
 
     def execute_action(self, action):
         """
