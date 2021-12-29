@@ -15,13 +15,14 @@ import weakref
 
 import random
 import time
+import numpy.random as numpy_random
 import numpy as np
 import cv2
 from collections import deque
 from keras.applications.xception import Xception
-from keras.layers import Dense, GlobalAveragePooling2D
+from keras.layers import Dense, GlobalAveragePooling2D, Conv2D,AveragePooling2D,Flatten,Input,Concatenate
 from keras.optimizer_v2.adam import Adam
-from keras.models import Model
+from keras.models import Model,Sequential
 from keras.callbacks import TensorBoard
 
 import tensorflow as tf
@@ -177,15 +178,47 @@ class DQNAgent:
         self.training_initialized = False
 
     def create_model(self):
-        base_model = Xception(weights=None, include_top=False, input_shape=(IM_HEIGHT, IM_WIDTH, 3))
+        # base_model = Xception(weights=None, include_top=False, input_shape=(IM_HEIGHT, IM_WIDTH, 3))
 
-        x = base_model.output
-        x = GlobalAveragePooling2D()(x)
+        # x = base_model.output
+        # x = GlobalAveragePooling2D()(x)
 
-        predictions = Dense(3, activation="linear")(x)
-        model = Model(inputs=base_model.input, outputs=predictions)
-        model.compile(loss="mse", optimizer=Adam(learning_rate=0.001), metrics=["accuracy"])
-        return model
+        # predictions = Dense(3, activation="linear")(x)
+        # model = Model(inputs=base_model.input, outputs=predictions)
+        # model.compile(loss="mse", optimizer=Adam(learning_rate=0.001), metrics=["accuracy"])
+
+        model = Sequential()
+
+        model.add(Conv2D(64, (5, 5), input_shape=(IM_HEIGHT, IM_WIDTH, 3), padding='same', activation='relu'))
+        model.add(AveragePooling2D(pool_size=(5, 5), strides=(3, 3), padding='same'))
+
+        model.add(Conv2D(64, (5, 5), padding='same', activation='relu'))
+        model.add(AveragePooling2D(pool_size=(5, 5), strides=(3, 3), padding='same'))
+
+        model.add(Conv2D(128, (5, 5), padding='same', activation='relu'))
+        model.add(AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same'))
+
+        model.add(Conv2D(256, (3, 3), padding='same', activation='relu'))
+        model.add(AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same'))
+
+        model.add(Flatten())
+        model.summary()
+
+        # Add additional inputs with more data and concatenate
+        inputs = [model.input]
+
+        model2 = Input(shape=(3,))
+        inputs.append(model2)
+        model2d = Dense(9, input_shape=(3,), activation='relu')(model2)
+        concatModel = Concatenate()([model.output, model2d])
+
+        # And finally output (regression) layer
+        predictions = Dense(9, activation='linear')(concatModel)
+
+        finalModel = Model(inputs=inputs, outputs=predictions)
+        finalModel.compile(loss="categorical_crossentropy", optimizer='adam', metrics=["accuracy"])
+
+        return finalModel
 
     def update_replay_memory(self, transition):
         # transition = (current_state, action, reward, new_state, done)
@@ -197,11 +230,21 @@ class DQNAgent:
 
         minibatch = random.sample(self.replay_memory, MINIBATCH_SIZE)
 
-        current_states = np.array([transition[0] for transition in minibatch]) / 255
+        current_states = [transition[0] for transition in minibatch]
+        np.array(current_states[0]) / 255
+        current_states[1] /= 360
+        current_states[2] /= 300
+        current_states[3] = (current_states[3] - 50) / 50
+
         # with self.graph.as_default():
         current_qs_list = self.model.predict(current_states, PREDICTION_BATCH_SIZE)
 
-        new_current_states = np.array([transition[3] for transition in minibatch]) / 255
+        new_current_states = [transition[3] for transition in minibatch]
+        np.array(new_current_states[0]) / 255
+        new_current_states[1] /= 360
+        new_current_states[2] /= 300
+        new_current_states[3] = (new_current_states[3] - 50) / 50
+
         # with self.graph.as_default():
         future_qs_list = self.target_model.predict(new_current_states, PREDICTION_BATCH_SIZE)
 
@@ -218,7 +261,8 @@ class DQNAgent:
             current_qs = current_qs_list[index]
             current_qs[action] = new_q
 
-            X.append(current_state)
+            X.append((np.array(current_state[0]) / 255))
+            X.append([(current_state[1]/360), (current_state[2]/300), ((current_state[3] - 50) / 50)])
             y.append(current_qs)
 
         log_this_step = False
@@ -227,7 +271,7 @@ class DQNAgent:
             self.last_log_episode = self.tensorboard.step
 
         # with self.graph.as_default():
-        self.model.fit(np.array(X) / 255, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0, shuffle=False,
+        self.model.fit(X, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0, shuffle=False,
                        callbacks=[self.tensorboard] if log_this_step else None)
 
         if log_this_step:
@@ -241,9 +285,16 @@ class DQNAgent:
         return self.model.predict(np.array(state).reshape(-1, *state.shape) / 255)[0]
 
     def train_in_loop(self):
-        X = np.random.uniform(size=(1, IM_HEIGHT, IM_WIDTH, 3)).astype(np.float32)
-        y = np.random.uniform(size=(1, 3)).astype(np.float32)
+        X = []
+        X.append(np.random.uniform(size=(1, IM_HEIGHT, IM_WIDTH, 3)).astype(np.float32))
+        X.append(np.asarray([0.0,0.5,0.0]).astype(np.float32))
+        X = np.array(X).astype(np.float32)
+        #X = np.array([np.array(val) for val in X])
+        #print(X.shape)
+        y = np.random.uniform(size=(1, 9)).astype(np.float32)
         # with self.graph.as_default():
+        print(self.model.input)
+        print(self.model.output)
         self.model.fit(X, y, verbose=False, batch_size=1)
 
         self.training_initialized = True
@@ -339,7 +390,10 @@ class CarEnvironment(object):
         # angle and distance to the next checkpoint
         distance, angle = self.get_next_checkpoint_state()
 
-        return img, angle, distance
+        v = self.vehicle.actor.get_velocity()
+        kmh = int(3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2))
+
+        return img, angle, distance, kmh
 
     def get_next_checkpoint_state(self) -> tuple:
         vehicle_transform = self.vehicle.actor.get_transform()
