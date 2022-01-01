@@ -457,7 +457,6 @@ class Vehicle:
         # spawn point of the car
         x, y, z = SPAWN_LOCATION
         self.spawn_point = carla.Transform(carla.Location(x=x, y=y, z=z), carla.Rotation(yaw=180))
-        print(str(self.spawn_point))
 
     def spawn_actor(self):
         try:
@@ -814,6 +813,8 @@ def learn_loop():
         # connect to the CARLA simulator
         client = carla.Client(PORT, HOST)
         client.set_timeout(5.0)
+
+        client.load_world("Town02_Opt")
 
         sim_world = client.get_world()
 

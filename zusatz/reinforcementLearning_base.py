@@ -20,7 +20,7 @@ from threading import Thread
 from tqdm import tqdm
 
 try:
-    sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
+    sys.path.append(glob.glob('../../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
         sys.version_info.minor,
         'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
@@ -298,8 +298,8 @@ if __name__ == '__main__':
     #backend.set_session(tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)))
 
     # Create models folder
-    if not os.path.isdir('models'):
-        os.makedirs('models')
+    if not os.path.isdir('../models'):
+        os.makedirs('../models')
 
     # Create agent and environment
     agent = DQNAgent()
