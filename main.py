@@ -202,20 +202,21 @@ class DQNAgent:
         model.add(AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same'))
 
         model.add(Flatten())
-        model.summary()
 
         # Add additional inputs with more data and concatenate
-        inputs = [model.input]
+        #inputs = [model.input]
 
         model2 = Input(shape=(3,))
-        inputs.append(model2)
+        #inputs.append(model2)
         model2d = Dense(9, input_shape=(3,), activation='relu')(model2)
         concatModel = Concatenate()([model.output, model2d])
 
         # And finally output (regression) layer
         predictions = Dense(9, activation='linear')(concatModel)
 
-        finalModel = Model(inputs=inputs, outputs=predictions)
+        finalModel = Model(inputs=[model.input, model2], outputs=predictions)
+
+        finalModel.summary()
         finalModel.compile(loss="categorical_crossentropy", optimizer='adam', metrics=["accuracy"])
 
         return finalModel
@@ -282,20 +283,30 @@ class DQNAgent:
             self.target_update_counter = 0
 
     def get_qs(self, state):
-        return self.model.predict(np.array(state).reshape(-1, *state.shape) / 255)[0]
+        #print(state)
+        X = []
+        X.append(np.array(state[0]) / 255)
+        #state[0] = state[0].reshape(1, -1)
+        X.append([state[1] / 360, state[2] / 300, (state[3] - 50) / 50])
+        X[1] = np.asarray(X[1])
+        X[1] = X[1].reshape(1, -1)
+        return self.model.predict(X)[0]
 
     def train_in_loop(self):
-        X = []
-        X.append(np.random.uniform(size=(1, IM_HEIGHT, IM_WIDTH, 3)).astype(np.float32))
-        X.append(np.asarray([0.0,0.5,0.0]).astype(np.float32))
-        X = np.array(X).astype(np.float32)
+        #X = []
+        x1 = np.random.uniform(size=(1, IM_HEIGHT, IM_WIDTH, 3)).astype(np.float32)
+        #print(x1.shape)
+        x2 = np.asarray([0.0,0.5,0.0]).astype(np.float32)
+        x2 = x2.reshape(1, -1)
+        #X = np.array(X)#.astype(np.float32)
         #X = np.array([np.array(val) for val in X])
         #print(X.shape)
         y = np.random.uniform(size=(1, 9)).astype(np.float32)
+
         # with self.graph.as_default():
         print(self.model.input)
         print(self.model.output)
-        self.model.fit(X, y, verbose=False, batch_size=1)
+        self.model.fit([x1,x2], y, verbose=False, batch_size=1)
 
         self.training_initialized = True
 
@@ -393,7 +404,7 @@ class CarEnvironment(object):
         v = self.vehicle.actor.get_velocity()
         kmh = int(3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2))
 
-        return img, angle, distance, kmh
+        return [img], angle, distance, kmh
 
     def get_next_checkpoint_state(self) -> tuple:
         vehicle_transform = self.vehicle.actor.get_transform()
@@ -704,7 +715,7 @@ class LaneInvasionSensor(object):
         """On invasion method"""
         lane_types = set(x.type for x in event.crossed_lane_markings)
 
-        print(lane_types)
+        #(lane_types)
 
         self.history.append(event)
 
@@ -817,7 +828,9 @@ def learn_loop():
         while not agent.training_initialized:
             time.sleep(0.01)
 
-        agent.get_qs(np.ones((HEIGHT, WIDTH, 3)))
+        startState = np.ones((1, HEIGHT, WIDTH, 3)), 1,1,1
+
+        agent.get_qs(startState)
 
         for episode in tqdm(range(1, EPISODES + 1), ascii=True, unit='episodes'):
 
@@ -841,10 +854,12 @@ def learn_loop():
                 # get fitting action from Q table for the current state, or select one at random
                 if np.random.random() > epsilon:
                     action = np.argmax(agent.get_qs(current_state))
+                    #print(agent.get_qs(current_state))
                 else:
-                    action = np.random.randint(0, 3)
+                    action = np.random.randint(0, 9)
                     time.sleep(1 / FPS)
 
+                action = action % 3
                 # execute the action in the environment
                 new_state, reward, done, _ = car_environment.step(action)
 
