@@ -7,11 +7,12 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 # TODO Lernalgorithmus fragt, ob das letzte Ziel erreicht wurde. Brind dann episode ab, gibt reward und resettet die checkpoints
 # TODO Zeit hochstellen, wenn durch Checkpoint gefahren
 
+# TODO testen, ob bei den Schwarz/ weiß bildern die Werte zwischen 0 und 1 sind. Wenn ja müssen wir die Bilder nicht mehr durch 255 teilen
+
 import glob
 import logging
 import math
 import sys
-import weakref
 
 import random
 import time
@@ -20,23 +21,15 @@ import numpy as np
 import cv2
 from collections import deque
 from keras.applications.xception import Xception
-from keras.layers import Dense, GlobalAveragePooling2D, Conv2D,AveragePooling2D,Flatten,Input,Concatenate
+from keras.layers import Dense, GlobalAveragePooling2D, Conv2D, AveragePooling2D, Flatten, Input, Concatenate
 from keras.optimizer_v2.adam import Adam
-from keras.models import Model,Sequential
+from keras.models import Model, Sequential
 from keras.callbacks import TensorBoard
 
 import tensorflow as tf
 from threading import Thread
 
 from tqdm import tqdm
-
-try:
-    import pygame
-    from pygame.locals import KMOD_CTRL
-    from pygame.locals import K_ESCAPE
-    from pygame.locals import K_q
-except ImportError:
-    raise RuntimeError('cannot import pygame, make sure pygame package is installed')
 
 try:
     import numpy as np
@@ -84,8 +77,9 @@ FOV = 110
 SHOW_IMAGE = False
 SPAWN_LOCATION = (79.19, 302.39, 2.0)
 
-IM_WIDTH = 640
-IM_HEIGHT = 480
+DEGREE_DIVISOR = 360
+DISTANCE_DIVISOR = 500
+
 SECONDS_PER_EPISODE = 10
 REPLAY_MEMORY_SIZE = 5_000
 MIN_REPLAY_MEMORY_SIZE = 1_000
@@ -134,17 +128,17 @@ class ModifiedTensorBoard(TensorBoard):
 
         self._should_write_train_graph = False
 
-    # Overrided, saves logs with our step number
+    # Overwritten, saves logs with our step number
     # (otherwise every .fit() will start writing from 0th step)
     def on_epoch_end(self, epoch, logs=None):
         self.update_stats(**logs)
 
-    # Overrided
+    # Overwritten
     # We train for one batch only, no need to save anything at epoch end
     def on_batch_end(self, batch, logs=None):
         pass
 
-    # Overrided, so won't close writer
+    # Overwritten, so won't close writer
     def on_train_end(self, _):
         pass
 
@@ -171,61 +165,56 @@ class DQNAgent:
 
         self.tensorboard = ModifiedTensorBoard(log_dir=f"logs/{MODEL_NAME}-{int(time.time())}")
         self.target_update_counter = 0
-        # self.graph = tf.get_default_graph()
 
         self.terminate = False
         self.last_logged_episode = 0
         self.training_initialized = False
 
     def create_model(self):
-        # base_model = Xception(weights=None, include_top=False, input_shape=(IM_HEIGHT, IM_WIDTH, 3))
+        """
+        Create a neural network which takes an image, the distance and the angle to the next checkpoint and the current
+        velocity of the car as an input.
+        The output layer has 9 neurons in total. One for each action the vehicle can take.
+        """
 
-        # x = base_model.output
-        # x = GlobalAveragePooling2D()(x)
+        # network for image processing
+        img_network_in = Input(shape=(HEIGHT, WIDTH, 1), name="img_input")
 
-        # predictions = Dense(3, activation="linear")(x)
-        # model = Model(inputs=base_model.input, outputs=predictions)
-        # model.compile(loss="mse", optimizer=Adam(learning_rate=0.001), metrics=["accuracy"])
+        img_network = Conv2D(64, (5, 5), padding='same', activation='relu')(img_network_in)
+        img_network = AveragePooling2D(pool_size=(5, 5), strides=(3, 3), padding='same')(img_network)
 
-        model = Sequential()
+        img_network = Conv2D(128, (5, 5), padding='same', activation='relu')(img_network)
+        img_network = AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same')(img_network)
 
-        model.add(Conv2D(64, (5, 5), input_shape=(IM_HEIGHT, IM_WIDTH, 3), padding='same', activation='relu'))
-        model.add(AveragePooling2D(pool_size=(5, 5), strides=(3, 3), padding='same'))
+        img_network = Conv2D(256, (3, 3), padding='same', activation='relu')(img_network)
+        img_network = AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same')(img_network)
 
-        model.add(Conv2D(64, (5, 5), padding='same', activation='relu'))
-        model.add(AveragePooling2D(pool_size=(5, 5), strides=(3, 3), padding='same'))
+        img_network_out = Flatten()(img_network)
 
-        model.add(Conv2D(128, (5, 5), padding='same', activation='relu'))
-        model.add(AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same'))
+        # network for additional inputs
+        add_network_input = Input(shape=(3,), name="add_input")
+        add_network_out = Dense(9, activation='relu')(add_network_input)
 
-        model.add(Conv2D(256, (3, 3), padding='same', activation='relu'))
-        model.add(AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same'))
+        # concatenate both networks
+        concat_model = Concatenate()([img_network_out, add_network_out])
+        concat_model_out = Dense(9, activation='linear')(concat_model)
 
-        model.add(Flatten())
+        model = Model(inputs=[img_network_in, add_network_input], outputs=concat_model_out)
+        model.compile(
+            loss="categorical_crossentropy",
+            optimizer='adam',
+            metrics=["accuracy"]
+        )
 
-        # Add additional inputs with more data and concatenate
-        #inputs = [model.input]
-
-        model2 = Input(shape=(3,))
-        #inputs.append(model2)
-        model2d = Dense(9, input_shape=(3,), activation='relu')(model2)
-        concatModel = Concatenate()([model.output, model2d])
-
-        # And finally output (regression) layer
-        predictions = Dense(9, activation='linear')(concatModel)
-
-        finalModel = Model(inputs=[model.input, model2], outputs=predictions)
-
-        finalModel.summary()
-        finalModel.compile(loss="categorical_crossentropy", optimizer='adam', metrics=["accuracy"])
-
-        return finalModel
+        return model
 
     def update_replay_memory(self, transition):
+        # TODO was ist der Sinn hiervon? (konkret was bedeutet der auskommentierte Code)
         # transition = (current_state, action, reward, new_state, done)
         self.replay_memory.append(transition)
 
     def train(self):
+        # TODO das hier aufräumen
         if len(self.replay_memory) < MIN_REPLAY_MEMORY_SIZE:
             return
 
@@ -233,8 +222,8 @@ class DQNAgent:
 
         current_states = [transition[0] for transition in minibatch]
         np.array(current_states[0]) / 255
-        current_states[1] /= 360
-        current_states[2] /= 300
+        current_states[1] /= DEGREE_DIVISOR
+        current_states[2] /= DISTANCE_DIVISOR
         current_states[3] = (current_states[3] - 50) / 50
 
         # with self.graph.as_default():
@@ -242,8 +231,8 @@ class DQNAgent:
 
         new_current_states = [transition[3] for transition in minibatch]
         np.array(new_current_states[0]) / 255
-        new_current_states[1] /= 360
-        new_current_states[2] /= 300
+        new_current_states[1] /= DEGREE_DIVISOR
+        new_current_states[2] /= DISTANCE_DIVISOR
         new_current_states[3] = (new_current_states[3] - 50) / 50
 
         # with self.graph.as_default():
@@ -263,7 +252,8 @@ class DQNAgent:
             current_qs[action] = new_q
 
             X.append((np.array(current_state[0]) / 255))
-            X.append([(current_state[1]/360), (current_state[2]/300), ((current_state[3] - 50) / 50)])
+            X.append([(current_state[1] / DEGREE_DIVISOR), (current_state[2] / DISTANCE_DIVISOR),
+                      ((current_state[3] - 50) / 50)])
             y.append(current_qs)
 
         log_this_step = False
@@ -283,30 +273,26 @@ class DQNAgent:
             self.target_update_counter = 0
 
     def get_qs(self, state):
-        #print(state)
-        X = []
-        X.append(np.array(state[0]) / 255)
-        #state[0] = state[0].reshape(1, -1)
-        X.append([state[1] / 360, state[2] / 300, (state[3] - 50) / 50])
-        X[1] = np.asarray(X[1])
-        X[1] = X[1].reshape(1, -1)
-        return self.model.predict(X)[0]
+        img_in = np.asarray(state[0]) / 255
+        add_in = np.asarray([state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR, (state[3] - 50) / 50],
+                            dtype=np.float32)
+        add_in = add_in.reshape(1, -1)
+
+        qs = self.model.predict(
+            x={"img_input": img_in, "add_input": add_in}
+        )
+
+        return qs[0]
 
     def train_in_loop(self):
-        #X = []
-        x1 = np.random.uniform(size=(1, IM_HEIGHT, IM_WIDTH, 3)).astype(np.float32)
-        #print(x1.shape)
-        x2 = np.asarray([0.0,0.5,0.0]).astype(np.float32)
-        x2 = x2.reshape(1, -1)
-        #X = np.array(X)#.astype(np.float32)
-        #X = np.array([np.array(val) for val in X])
-        #print(X.shape)
+        # initialize the neural network with random/ default values
+        img_in = np.random.uniform(size=(1, HEIGHT, WIDTH, 1)).astype(np.float32)
+        add_in = np.asarray([0.0, 0.5, 0.0]).astype(np.float32)
+        add_in = add_in.reshape(1, -1)
+
         y = np.random.uniform(size=(1, 9)).astype(np.float32)
 
-        # with self.graph.as_default():
-        print(self.model.input)
-        print(self.model.output)
-        self.model.fit([x1,x2], y, verbose=False, batch_size=1)
+        self.model.fit(x={"img_input": img_in, "add_input": add_in}, y=y, verbose=False, batch_size=1)
 
         self.training_initialized = True
 
@@ -317,6 +303,7 @@ class DQNAgent:
             time.sleep(0.01)
 
 
+# TODO car environment und das was damit zusammenhängt in eigene Datei auslagern (?)
 # ==============================================================================
 # -- CarEnvironment ---------------------------------------------------------------
 # ==============================================================================
@@ -423,7 +410,7 @@ class CarEnvironment(object):
         raw_angle = math.atan2(c_y - v_y, c_x - v_x)
         raw_angle = math.degrees(raw_angle)
 
-        angle = int((raw_angle - vehicle_transform.rotation.yaw) % 360)
+        angle = int((raw_angle - vehicle_transform.rotation.yaw) % DEGREE_DIVISOR)
 
         return distance, angle
 
@@ -461,7 +448,7 @@ class Vehicle:
     def spawn_actor(self):
         try:
             self.actor = self.world.world.spawn_actor(self.blueprint, self.spawn_point)
-        except RuntimeError as e:
+        except RuntimeError:
             print("Runtime Error")
 
     def execute_action(self, action):
@@ -508,10 +495,10 @@ class Vehicle:
             brake_value = 1.0
 
             # go left
-            if action == 7:
+            if action == 6:
                 steer_value = -1.0
             # go straight
-            elif action == 8:
+            elif action == 7:
                 steer_value = 0
             # go right
             else:
@@ -628,7 +615,7 @@ def lane_detection_from_sem_seg(img):
     """
     Convert a semantic segmentation image into a black and white image where only the contours of the road are highlighted.
     :param img: the image returned form the semantic segmentation camera
-    :return: a black and shite image containing the road edges
+    :return: a black and white image containing the road edges
     """
     height, width, channels = img.shape
     img_output = np.zeros((height, width, 3), np.uint8)
@@ -659,6 +646,8 @@ def lane_detection_from_sem_seg(img):
             street = contour
 
     cv2.drawContours(img_output, street, -1, (255, 255, 255), 1)
+
+    img_output = cv2.cvtColor(img_output, cv2.COLOR_BGR2GRAY)
 
     return img_output
 
@@ -713,8 +702,9 @@ class LaneInvasionSensor(object):
     def on_invasion(self, event):
         """On invasion method"""
         lane_types = set(x.type for x in event.crossed_lane_markings)
+        # TODO lane types filtern/ oder nicht, wenn es nicht funktioniert
 
-        #(lane_types)
+        # (lane_types)
 
         self.history.append(event)
 
@@ -815,6 +805,7 @@ def learn_loop():
         client.set_timeout(5.0)
 
         client.load_world("Town02_Opt")
+        # TODO layer unloaden, in dem kleine Sachen sind, die Kollisionen verursachen könnten, die wir nicht gebrauchen können.
 
         sim_world = client.get_world()
 
@@ -829,9 +820,9 @@ def learn_loop():
         while not agent.training_initialized:
             time.sleep(0.01)
 
-        startState = np.ones((1, HEIGHT, WIDTH, 3)), 1,1,1
+        start_state = np.ones((1, HEIGHT, WIDTH, 1)), 1, 1, 1
 
-        agent.get_qs(startState)
+        agent.get_qs(start_state)
 
         for episode in tqdm(range(1, EPISODES + 1), ascii=True, unit='episodes'):
 
@@ -855,7 +846,7 @@ def learn_loop():
                 # get fitting action from Q table for the current state, or select one at random
                 if np.random.random() > epsilon:
                     action = np.argmax(agent.get_qs(current_state))
-                    #print(agent.get_qs(current_state))
+                    # print(agent.get_qs(current_state))
                 else:
                     action = np.random.randint(0, 9)
                     time.sleep(1 / FPS)
