@@ -3,10 +3,6 @@ import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
-# TODO Lernalgorithmus fragt ab, ob die position im aktuellen checkpoint ist
-# TODO Lernalgorithmus fragt, ob das letzte Ziel erreicht wurde. Brind dann episode ab, gibt reward und resettet die checkpoints
-# TODO Zeit hochstellen, wenn durch Checkpoint gefahren
-
 # TODO testen, ob bei den Schwarz/ weiß bildern die Werte zwischen 0 und 1 sind. Wenn ja müssen wir die Bilder nicht mehr durch 255 teilen
 
 import glob
@@ -330,6 +326,9 @@ class CarEnvironment(object):
         self.checkpoint_manager.init_checkpoints()
 
         self.episode_start = None
+        self.extra_time = None
+
+        self.checkpoint_distance = 10_000
 
     def restart(self):
         """
@@ -359,27 +358,72 @@ class CarEnvironment(object):
 
         return self.get_state()
 
-    def step(self, action):
-        # execute the action by addressing the actuators
+    def step(self, action: int) -> tuple:
+        """
+        Execute a step in the car environment. The actor will be rewarded based on the action he took.
+        If the actor collides into something, the episode should be ended and he is severely punished.
+        If the actor is going under 50 kmh the actor is mildly punished, but if the actor is going over 50 kmh he is
+        mildly rewarded instead.
+
+        :param action: the action the car should perform, selected by the neural network
+        :return: a tuple of (current state the actor is in; the reward earned in this step; an information whether the
+        episode is over; No additional information)
+        """
+        reward = 0
+        done = False
+
         self.vehicle.execute_action(action)
 
-        v = self.vehicle.actor.get_velocity()
-        kmh = int(3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2))
+        car_location = (self.vehicle.actor.get_location().x, self.vehicle.actor.get_location().y)
+        if self.checkpoint_manager.check_in_current(car_location):
+            reward += 1
 
-        if len(self.collision_sensor.history) != 0:
-            done = True
-            reward = -1
-        elif kmh < 50:
-            done = False
-            reward = -0.1
-        else:
-            done = False
-            reward = 0.1
+            # give extra reward based on how much time was left when reaching the checkpoint
+            time_left = (self.episode_start + SECONDS_PER_EPISODE + self.extra_time) - time.time()
+            if time_left > 0:
+                reward += time_left / 10
 
-        if self.episode_start + SECONDS_PER_EPISODE < time.time():
-            done = True
+            self.checkpoint_manager.toggle_next()
 
-        return self.get_state(), reward, done, None
+            self.extra_time += 10
+            self.checkpoint_distance = 10_000
+
+            # self.world.debug.draw_point(
+            #    self.checkpoint_manager.checkpoints[self.checkpoint_manager.current].get_location(),
+            #    size=1.0,
+            #    color=carla.Color(r=255, g=0, b=0),
+            #    life_time=5.0)
+
+            if self.checkpoint_manager.check_finished():
+                reward += 100
+                done = True
+
+        if not done:
+            kmh = self.vehicle.get_kmh()
+
+            if len(self.collision_sensor.history) != 0:
+                done = True
+                reward -= 3
+            elif kmh < 35:
+                done = False
+                reward -= 0.1
+            else:
+                done = False
+                reward += 0.1
+
+            # stop episode if it takes too long
+            if time.time() > self.episode_start + SECONDS_PER_EPISODE + self.extra_time:
+                done = True
+
+        current_state = self.get_state()
+
+        # give extra reward if distance to checkpoint is lowered
+        distance = current_state[2]
+        if distance < self.checkpoint_distance:
+            self.checkpoint_distance = distance
+            reward += 0.1
+
+        return current_state, reward, done, None
 
     def get_state(self):
         # current camera image
@@ -388,8 +432,7 @@ class CarEnvironment(object):
         # angle and distance to the next checkpoint
         distance, angle = self.get_next_checkpoint_state()
 
-        v = self.vehicle.actor.get_velocity()
-        kmh = int(3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2))
+        kmh = self.vehicle.get_kmh()
 
         return [img], angle, distance, kmh
 
@@ -505,11 +548,16 @@ class Vehicle:
                 steer_value = 1.0
 
         self.actor.apply_control(carla.VehicleControl(throttle=throttle_value, steer=steer_value, brake=brake_value))
+        time.sleep(0.05)  # maybe?
 
     def destroy(self):
         if self.actor is not None:
             self.actor.destroy()
         self.actor = None
+
+    def get_kmh(self) -> int:
+        v = self.actor.get_velocity()
+        return int(3.6 * math.sqrt(v.x ** 2 + v.y ** 2 + v.z ** 2))
 
 
 # ==============================================================================
@@ -723,30 +771,30 @@ class CheckpointManager:
         self.current = 0
 
     def init_checkpoints(self):
-        self.checkpoints.append(Checkpoint((53.74, 300.94), (53.74, 308.1)))
-        self.checkpoints.append(Checkpoint((40.56, 290.16), (47.28, 294.21)))
-        self.checkpoints.append(Checkpoint((39.88, 270.72), (47.94, 274.30)))
-        self.checkpoints.append(Checkpoint((39.65, 249.20), (47.81, 253.73)))
-        self.checkpoints.append(Checkpoint((54.45, 235.06), (60.21, 243.01)))
-        self.checkpoints.append(Checkpoint((81.25, 234.85), (60.21, 243.01)))
-        self.checkpoints.append(Checkpoint((101.19, 234.56), (105.04, 242.99)))
-        self.checkpoints.append(Checkpoint((121.11, 234.95), (125.84, 242.78)))
-        self.checkpoints.append(Checkpoint((130.34, 225.01), (138.09, 229.04)))
-        self.checkpoints.append(Checkpoint((130.26, 211.45), (138.26, 215.02)))
-        self.checkpoints.append(Checkpoint((130.03, 199.36), (138.28, 202.17)))
-        self.checkpoints.append(Checkpoint((142.63, 187.11), (146.67, 193.79)))
-        self.checkpoints.append(Checkpoint((164.83, 185.64), (158.93, 193.39)))
-        self.checkpoints.append(Checkpoint((178.83, 185.67), (183.42, 193.82)))
-        self.checkpoints.append(Checkpoint((187.23, 199.77), (193.71, 202.44)))
-        self.checkpoints.append(Checkpoint((187.68, 211.07), (195.74, 214.72)))
-        self.checkpoints.append(Checkpoint((187.50, 226.63), (195.69, 230.63)))
-        self.checkpoints.append(Checkpoint((187.71, 248.95), (195.60, 251.40)))
-        self.checkpoints.append(Checkpoint((187.79, 272.25), (195.47, 276.07)))
-        self.checkpoints.append(Checkpoint((187.70, 292.79), (195.86, 296.51)))
-        self.checkpoints.append(Checkpoint((177.23, 300.79), (182.63, 308.80)))
-        self.checkpoints.append(Checkpoint((147.25, 300.61), (152.20, 308.55)))
-        self.checkpoints.append(Checkpoint((101.82, 300.65), (106.76, 308.59)))
-        self.checkpoints.append(Checkpoint((76.28, 300.46), (80.43, 308.71)))
+        self.checkpoints.append(Checkpoint((56.29, 300.03), (59.0, 310.61)))  # 1
+        self.checkpoints.append(Checkpoint((40.56, 290.16), (47.28, 294.21)))  # 2
+        self.checkpoints.append(Checkpoint((39.88, 270.72), (47.94, 274.30)))  # 3
+        self.checkpoints.append(Checkpoint((39.65, 249.20), (47.81, 253.73)))  # 4
+        self.checkpoints.append(Checkpoint((54.45, 235.06), (60.21, 243.01)))  # 5
+        self.checkpoints.append(Checkpoint((81.25, 234.85), (60.21, 243.01)))  # 6
+        self.checkpoints.append(Checkpoint((101.19, 234.56), (105.04, 242.99)))  # 7
+        self.checkpoints.append(Checkpoint((121.11, 234.95), (125.84, 242.78)))  # 8
+        self.checkpoints.append(Checkpoint((130.34, 225.01), (138.09, 229.04)))  # 9
+        self.checkpoints.append(Checkpoint((130.26, 211.45), (138.26, 215.02)))  # 10
+        self.checkpoints.append(Checkpoint((130.03, 199.36), (138.28, 202.17)))  # 11
+        self.checkpoints.append(Checkpoint((142.63, 187.11), (146.67, 193.79)))  # 12
+        self.checkpoints.append(Checkpoint((164.83, 185.64), (158.93, 193.39)))  # 13
+        self.checkpoints.append(Checkpoint((178.83, 185.67), (183.42, 193.82)))  # 14
+        self.checkpoints.append(Checkpoint((187.23, 199.77), (193.71, 202.44)))  # 15
+        self.checkpoints.append(Checkpoint((187.68, 211.07), (195.74, 214.72)))  # 16
+        self.checkpoints.append(Checkpoint((187.50, 226.63), (195.69, 230.63)))  # 17
+        self.checkpoints.append(Checkpoint((187.71, 248.95), (195.60, 251.40)))  # 18
+        self.checkpoints.append(Checkpoint((187.79, 272.25), (195.47, 276.07)))  # 19
+        self.checkpoints.append(Checkpoint((187.70, 292.79), (195.86, 296.51)))  # 20
+        self.checkpoints.append(Checkpoint((177.23, 300.79), (182.63, 308.80)))  # 21
+        self.checkpoints.append(Checkpoint((147.25, 300.61), (152.20, 308.55)))  # 22
+        self.checkpoints.append(Checkpoint((101.82, 300.65), (106.76, 308.59)))  # 23
+        self.checkpoints.append(Checkpoint((76.28, 300.46), (80.43, 308.71)))  # 0
 
     def reset(self):
         self.current = 0
@@ -758,8 +806,7 @@ class CheckpointManager:
         return self.checkpoints[self.current].is_inbounds(position)
 
     def toggle_next(self):
-        if self.current < len(self.checkpoints):
-            self.current += 1
+        self.current += 1
 
     def check_finished(self):
         return self.current >= len(self.checkpoints)
@@ -839,6 +886,7 @@ def learn_loop():
             # Reset flag and start iterating until episode ends
             car_environment.done = False
             car_environment.episode_start = time.time()
+            car_environment.extra_time = 0
 
             # Play for given number of seconds only
             while True:

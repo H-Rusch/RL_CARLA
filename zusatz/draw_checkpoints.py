@@ -33,6 +33,8 @@ _SLEEP_TIME_ = 3
 def main():
     client = carla.Client(_HOST_, _PORT_)
     client.set_timeout(2.0)
+
+    client.load_world("Town02_Opt")
     world = client.get_world()
     map = world.get_map()
 
