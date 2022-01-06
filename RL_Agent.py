@@ -27,8 +27,7 @@ DISCOUNT = 0.99
 
 START_MODEL = None
 
-
-# START_MODEL = "models/Xception_____5.40max___-1.75avg___-3.90min__1641311571.model"
+#START_MODEL = "models/Xception_____5.40max___-1.75avg___-3.90min__1641311571.model"
 
 
 # ==============================================================================
@@ -116,7 +115,8 @@ class DQNAgent:
 
         input_adds = np.asarray(input_adds)
 
-        current_qs_list = self.model.predict_on_batch({"img_input": input_imgs, "add_input": input_adds})
+        #current_qs_list = self.model.predict_on_batch({"img_input": input_imgs, "add_input": input_adds})
+        current_qs_list = self.model.predict({"img_input": input_imgs, "add_input": input_adds}, PREDICTION_BATCH_SIZE)
 
         # new
         new_current_states = [transition[3] for transition in minibatch]
@@ -131,7 +131,8 @@ class DQNAgent:
 
         input_adds_new = np.asarray(input_adds_new)
 
-        future_qs_list = self.target_model.predict_on_batch({"img_input": input_imgs_new, "add_input": input_adds_new})
+        #future_qs_list = self.target_model.predict_on_batch({"img_input": input_imgs_new, "add_input": input_adds_new})
+        future_qs_list = self.target_model.predict({"img_input": input_imgs_new, "add_input": input_adds_new}, PREDICTION_BATCH_SIZE)
 
         X_img = []
         X_add = []
@@ -159,7 +160,7 @@ class DQNAgent:
         log_this_step = False
         if self.tensorboard.step > self.last_logged_episode:
             log_this_step = True
-            self.last_log_episode = self.tensorboard.step
+            self.last_logged_episode = self.tensorboard.step
 
         # with self.graph.as_default():
         self.model.fit({"img_input": X_img, "add_input": X_add}, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0, shuffle=False,
@@ -169,6 +170,7 @@ class DQNAgent:
             self.target_update_counter += 1
 
         if self.target_update_counter > UPDATE_TARGET_EVERY:
+            print("Update")
             self.target_model.set_weights(self.model.get_weights())
             self.target_update_counter = 0
 

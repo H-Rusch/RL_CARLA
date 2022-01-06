@@ -1,7 +1,7 @@
 from __future__ import print_function
 import os
 
-from RL_Environment import DQNAgent, MODEL_NAME, START_MODEL
+from RL_Agent import DQNAgent, MODEL_NAME, START_MODEL
 from CheckpointManager import CheckpointManager
 from Simulator import CarEnvironment
 from Simulator import WIDTH, HEIGHT
@@ -101,7 +101,10 @@ def learn_loop():
             start_state = np.ones((1, HEIGHT, WIDTH, 1)), 1, 1, 1
             agent.get_qs(start_state)
 
-        for episode in tqdm(range(1, EPISODES + 1), ascii=True, unit='episodes'):
+        episode = 0
+
+        while True:
+        #for episode in tqdm(range(1, EPISODES + 1), ascii=True, unit='episodes'):
             episode += 1
             # Update tensorboard step every episode
             agent.tensorboard.step = episode
