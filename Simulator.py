@@ -119,27 +119,19 @@ class CarEnvironment(object):
         done = False
 
         self.vehicle.execute_action(action)
-
         car_location = (self.vehicle.actor.get_location().x, self.vehicle.actor.get_location().y)
         if self.checkpoint_manager.check_in_current(car_location):
-            reward += 1
+            reward += 5
 
             # give extra reward based on how much time was left when reaching the checkpoint
             time_left = (self.episode_start + SECONDS_PER_EPISODE + self.extra_time) - time.time()
             if time_left > 0:
-                reward += time_left / 10
+                reward += time_left / 5
 
             self.checkpoint_manager.toggle_next()
 
             self.extra_time += 10
             self.checkpoint_distance = 10_000
-
-            # Show next checkpoint:
-            # self.world.debug.draw_point(
-            #    self.checkpoint_manager.checkpoints[self.checkpoint_manager.current].get_location(),
-            #    size=1.0,
-            #    color=carla.Color(r=255, g=0, b=0),
-            #    life_time=5.0)
 
             if self.checkpoint_manager.check_finished():
                 reward += 100
@@ -150,10 +142,10 @@ class CarEnvironment(object):
 
             if len(self.collision_sensor.history) != 0:
                 done = True
-                reward -= 3
+                reward -= 10
             elif kmh < 35:
                 done = False
-                reward -= 0.1
+                reward -= 0.01
             else:
                 done = False
                 reward += 0.1
@@ -168,8 +160,12 @@ class CarEnvironment(object):
         distance = current_state[2]
         if distance < self.checkpoint_distance:
             self.checkpoint_distance = distance
-            reward += 0.1
-
+            reward += 0.5
+        elif distance > self.checkpoint_distance:
+            reward -= 0.1
+        
+        if kmh == 0 and self.checkpoint_manager.current == 0:
+            reward = 0
         return current_state, reward, done, None
 
     def get_state(self):
@@ -330,7 +326,7 @@ class CameraManager(object):
         # transforms for camera
         # first person
         self._camera_transform_fp = (carla.Transform(
-            carla.Location(x=2, z=1)), carla.AttachmentType.Rigid)
+            carla.Location(x=2.1, z=1)), carla.AttachmentType.Rigid)
         # third person
         self._camera_transform_tp = (carla.Transform(
             carla.Location(x=-5.5, z=2.5)), carla.AttachmentType.Rigid)
@@ -403,7 +399,6 @@ class CameraManager(object):
 
         img = lane_detection_from_sem_seg(img)
         self.lane_detection_img = img
-
 
 def lane_detection_from_sem_seg(img):
     """
