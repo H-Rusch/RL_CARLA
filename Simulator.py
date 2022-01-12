@@ -133,6 +133,13 @@ class CarEnvironment(object):
             self.extra_time += 10
             self.checkpoint_distance = 10_000
 
+            # Show next checkpoint:
+            # self.world.debug.draw_point(
+            #    self.checkpoint_manager.checkpoints[self.checkpoint_manager.current].get_location(),
+            #    size=1.0,
+            #    color=carla.Color(r=255, g=0, b=0),
+            #    life_time=5.0)
+
             if self.checkpoint_manager.check_finished():
                 reward += 100
                 done = True
@@ -163,7 +170,7 @@ class CarEnvironment(object):
             reward += 0.5
         elif distance > self.checkpoint_distance:
             reward -= 0.1
-        
+
         if kmh == 0 and self.checkpoint_manager.current == 0:
             reward = 0
         return current_state, reward, done, None
@@ -232,10 +239,7 @@ class Vehicle:
         self.spawn_point = carla.Transform(carla.Location(x=x, y=y, z=z), carla.Rotation(yaw=180))
 
     def spawn_actor(self):
-        try:
-            self.actor = self.world.world.spawn_actor(self.blueprint, self.spawn_point)
-        except RuntimeError:
-            print("Runtime Error")
+        self.actor = self.world.world.spawn_actor(self.blueprint, self.spawn_point)
 
     def execute_action(self, action):
         """
@@ -326,7 +330,7 @@ class CameraManager(object):
         # transforms for camera
         # first person
         self._camera_transform_fp = (carla.Transform(
-            carla.Location(x=2.1, z=1)), carla.AttachmentType.Rigid)
+            carla.Location(x=2.2, z=1)), carla.AttachmentType.Rigid)
         # third person
         self._camera_transform_tp = (carla.Transform(
             carla.Location(x=-5.5, z=2.5)), carla.AttachmentType.Rigid)

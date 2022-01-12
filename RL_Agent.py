@@ -23,11 +23,8 @@ UPDATE_TARGET_EVERY = 5
 MODEL_NAME = "CNN"
 
 DISTANCE_DIVISOR = 500
-DISCOUNT = 0.99
+DISCOUNT = 0.8
 
-START_MODEL = None
-
-#START_MODEL = "models/Xception_____5.40max___-1.75avg___-3.90min__1641311571.model"
 
 
 # ==============================================================================
@@ -35,9 +32,9 @@ START_MODEL = None
 # ==============================================================================
 
 class DQNAgent:
-    def __init__(self):
-        self.model = self.create_model()
-        self.target_model = self.create_model()
+    def __init__(self, modelName):
+        self.model = self.create_model(modelName)
+        self.target_model = self.create_model(modelName)
         self.target_model.set_weights(self.model.get_weights())
 
         self.replay_memory = deque(maxlen=REPLAY_MEMORY_SIZE)
@@ -49,14 +46,15 @@ class DQNAgent:
         self.last_logged_episode = 0
         self.training_initialized = False
 
-    def create_model(self):
+    def create_model(self, modelName):
+        print("load ", modelName)
         """
         Create a neural network which takes an image, the distance and the angle to the next checkpoint and the current
         velocity of the car as an input.
         The output layer has 9 neurons in total. One for each action the vehicle can take.
         """
 
-        if START_MODEL is None:
+        if modelName is None:
 
             # network for image processing
             img_network_in = Input(shape=(HEIGHT, WIDTH, 1), name="img_input")
@@ -88,17 +86,16 @@ class DQNAgent:
             )
 
         else:
-            model = tf.keras.models.load_model(START_MODEL)
+            model = tf.keras.models.load_model(modelName)
 
         return model
 
     def update_replay_memory(self, transition):
-        # TODO was ist der Sinn hiervon? (konkret was bedeutet der auskommentierte Code)
-        # transition = (current_state, action, reward, new_state, done)
         self.replay_memory.append(transition)
 
     def train(self):
         # TODO das hier aufräumen
+        print(len(self.replay_memory))
         if len(self.replay_memory) < MIN_REPLAY_MEMORY_SIZE:
             return
 
@@ -162,7 +159,6 @@ class DQNAgent:
             log_this_step = True
             self.last_logged_episode = self.tensorboard.step
 
-        # with self.graph.as_default():
         self.model.fit({"img_input": X_img, "add_input": X_add}, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0, shuffle=False,
                        callbacks=[self.tensorboard] if log_this_step else None)
 

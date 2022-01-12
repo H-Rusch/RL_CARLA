@@ -1,18 +1,17 @@
 from __future__ import print_function
 import os
 
-from RL_Agent import DQNAgent, MODEL_NAME, START_MODEL
+from RL_Agent import DQNAgent, MODEL_NAME
 from CheckpointManager import CheckpointManager
 from Simulator import CarEnvironment
 from Simulator import WIDTH, HEIGHT
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-# TODO testen, ob bei den Schwarz/ weiß bildern die Werte zwischen 0 und 1 sind. Wenn ja müssen wir die Bilder nicht mehr durch 255 teilen
-
 import glob
 import logging
 import sys
+import subprocess
 
 import time
 import numpy as np
@@ -55,41 +54,54 @@ MIN_REWARD = 4
 EPISODES = 100
 
 epsilon = 1
-EPSILON_DECAY = 0.95  ## 0.9975 99975
+EPSILON_DECAY = 0.95
 MIN_EPSILON = 0.001
 MIN_EPSILON_2 = 0.01
 
 AGGREGATE_STATS_EVERY = 10
 
+loadModelName = None
 
 # ==============================================================================
 # -- Game Loop ---------------------------------------------------------
 # ==============================================================================
 
-def learn_loop():
+def startCarla():
+    print("startCarla")
+    subprocess.Popen("..\\..\\CarlaUE4.exe -quality-level=Low -ResX=300 -ResY=200")
+    time.sleep(3)
+
+    while True:
+
+        try:
+            client = carla.Client(HOST, PORT)
+            client.set_timeout(5.0)
+            map_name = client.get_world().get_map().name
+        # TODO layer unloaden, in dem kleine Sachen sind, die Kollisionen verursachen könnten, die wir nicht gebrauchen können.
+            if map_name != "Town02_Opt":
+                client.load_world("Town02_Opt")
+                time.sleep(1)
+            return client.get_world()
+        except RuntimeError as e:
+            time.sleep(0.1)
+
+def learn_loop(sim_world):
+    print("learn start")
     global epsilon
+    global loadModelName
 
     car_environment = None
     agent = None
+    trainer_thread = None
 
     FPS = 60
     ep_rewards = [-200]
 
     try:
-        # connect to the CARLA simulator
-        # TODO layer unloaden, in dem kleine Sachen sind, die Kollisionen verursachen könnten, die wir nicht gebrauchen können.
-        client = carla.Client(HOST, PORT)
-        client.set_timeout(5.0)
-        map_name = client.get_world().get_map().name
-        if map_name != "Town02_Opt":
-            client.load_world("Town02_Opt")
-            time.sleep(1)
-        sim_world = client.get_world()
-
         # create car environment in the simulator and our Reinforcement Learning agent
         checkpoint_manager = CheckpointManager()
         car_environment = CarEnvironment(sim_world, checkpoint_manager)
-        agent = DQNAgent()
+        agent = DQNAgent(loadModelName)
 
         # Start training thread and wait for training to be initialized
         trainer_thread = Thread(target=agent.train_in_loop, daemon=True)
@@ -97,7 +109,7 @@ def learn_loop():
         while not agent.training_initialized:
             time.sleep(0.01)
 
-        if START_MODEL is None:
+        if loadModelName is None:
             start_state = np.ones((1, HEIGHT, WIDTH, 1)), 1, 1, 1
             agent.get_qs(start_state)
 
@@ -160,8 +172,7 @@ def learn_loop():
 
                 # Save model, but only when min reward is greater or equal a set value
                 if min_reward >= MIN_REWARD:
-                    agent.model.save(
-                        f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model')
+                    saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
 
             # Decay epsilon
             if epsilon > MIN_EPSILON:
@@ -172,22 +183,25 @@ def learn_loop():
             print(str(episode_reward) + " :Reward|Epsilon: " + str(epsilon))
 
             if episode % 1000 == 0:
-                agent.model.save(
-                    f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model')
-            
-
-        # Set termination flag for training thread and wait for it to finish
-        agent.terminate = True
-        trainer_thread.join()
-        agent.model.save(
-            f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model')
+                saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
 
     finally:
+        print("learn finally")
+        # Set termination flag for training thread and wait for it to finish
+        if agent is not None:
+            agent.terminate = True
+            if trainer_thread is not None:
+                trainer_thread.join()
+            saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
+
         if car_environment is not None:
             car_environment.destroy()
 
-        # pygame.quit()
-
+def saveModel(modelName, agent):
+    print("save ", modelName)
+    global loadModelName
+    agent.model.save(modelName)
+    loadModelName = modelName
 
 def action_to_s(action):
     if action == 0:
@@ -225,10 +239,16 @@ def main():
         os.makedirs('models')
 
     # start the learning process
-    try:
-        learn_loop()
-    except KeyboardInterrupt:
-        print('\nCancelled by user.')
+    while True:
+        try:
+            sim_world = startCarla()
+            learn_loop(sim_world)
+        except RuntimeError as e:
+            print("main exception")
+            time.sleep(0.1)
+        except KeyboardInterrupt as e:
+            print('\nCancelled by user.')
+            raise e
 
 
 if __name__ == '__main__':
