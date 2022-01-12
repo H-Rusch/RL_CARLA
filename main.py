@@ -46,8 +46,6 @@ import carla
 PORT = 2000
 HOST = "127.0.0.1"
 
-
-
 MEMORY_FRACTION = 0.4
 MIN_REWARD = 4
 
@@ -60,13 +58,14 @@ MIN_EPSILON_2 = 0.01
 
 AGGREGATE_STATS_EVERY = 10
 
-loadModelName = None
+load_model_name = None
+
 
 # ==============================================================================
 # -- Game Loop ---------------------------------------------------------
 # ==============================================================================
 
-def startCarla():
+def start_carla():
     print("startCarla")
     subprocess.Popen("..\\..\\CarlaUE4.exe -quality-level=Low -ResX=300 -ResY=200")
     time.sleep(3)
@@ -77,18 +76,19 @@ def startCarla():
             client = carla.Client(HOST, PORT)
             client.set_timeout(5.0)
             map_name = client.get_world().get_map().name
-        # TODO layer unloaden, in dem kleine Sachen sind, die Kollisionen verursachen könnten, die wir nicht gebrauchen können.
+            # TODO layer unloaden, in dem kleine Sachen sind, die Kollisionen verursachen könnten, die wir nicht gebrauchen können.
             if map_name != "Town02_Opt":
                 client.load_world("Town02_Opt")
                 time.sleep(1)
             return client.get_world()
-        except RuntimeError as e:
+        except RuntimeError:
             time.sleep(0.1)
+
 
 def learn_loop(sim_world):
     print("learn start")
     global epsilon
-    global loadModelName
+    global load_model_name
 
     car_environment = None
     agent = None
@@ -101,7 +101,7 @@ def learn_loop(sim_world):
         # create car environment in the simulator and our Reinforcement Learning agent
         checkpoint_manager = CheckpointManager()
         car_environment = CarEnvironment(sim_world, checkpoint_manager)
-        agent = DQNAgent(loadModelName)
+        agent = DQNAgent(load_model_name)
 
         # Start training thread and wait for training to be initialized
         trainer_thread = Thread(target=agent.train_in_loop, daemon=True)
@@ -109,7 +109,7 @@ def learn_loop(sim_world):
         while not agent.training_initialized:
             time.sleep(0.01)
 
-        if loadModelName is None:
+        if load_model_name is None:
             start_state = np.ones((1, HEIGHT, WIDTH, 1)), 1, 1, 1
             agent.get_qs(start_state)
 
@@ -143,7 +143,7 @@ def learn_loop(sim_world):
                     action = np.random.randint(0, 9)
                     time.sleep(1 / FPS)
 
-                #action = action % 3
+                # action = action % 3
                 # execute the action in the environment
                 new_state, reward, done, _ = car_environment.step(action)
 
@@ -154,14 +154,14 @@ def learn_loop(sim_world):
 
                 current_state = new_state
                 step += 1
-                
+
                 if done:
                     break
 
             # End of episode - destroy agents
             car_environment.destroy()
             # Append episode reward to a list and log stats (every given number of episodes)
-            
+
             ep_rewards.append(episode_reward)
             if not episode % AGGREGATE_STATS_EVERY or episode == 1:
                 average_reward = sum(ep_rewards[-AGGREGATE_STATS_EVERY:]) / len(ep_rewards[-AGGREGATE_STATS_EVERY:])
@@ -172,7 +172,9 @@ def learn_loop(sim_world):
 
                 # Save model, but only when min reward is greater or equal a set value
                 if min_reward >= MIN_REWARD:
-                    saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
+                    save_model(
+                        f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
+                        agent)
 
             # Decay epsilon
             if epsilon > MIN_EPSILON:
@@ -183,7 +185,9 @@ def learn_loop(sim_world):
             print(str(episode_reward) + " :Reward|Epsilon: " + str(epsilon))
 
             if episode % 1000 == 0:
-                saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
+                save_model(
+                    f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
+                    agent)
 
     finally:
         print("learn finally")
@@ -192,16 +196,20 @@ def learn_loop(sim_world):
             agent.terminate = True
             if trainer_thread is not None:
                 trainer_thread.join()
-            saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
+            save_model(
+                f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
+                agent)
 
         if car_environment is not None:
             car_environment.destroy()
 
-def saveModel(modelName, agent):
-    print("save ", modelName)
-    global loadModelName
-    agent.model.save(modelName)
-    loadModelName = modelName
+
+def save_model(model_name, agent):
+    print("save ", model_name)
+    global load_model_name
+    agent.model.save(model_name)
+    load_model_name = model_name
+
 
 def action_to_s(action):
     if action == 0:
@@ -223,6 +231,7 @@ def action_to_s(action):
     elif action == 8:
         return "brake right"
 
+
 # ==============================================================================
 # -- main() --------------------------------------------------------------
 # ==============================================================================
@@ -241,9 +250,9 @@ def main():
     # start the learning process
     while True:
         try:
-            sim_world = startCarla()
+            sim_world = start_carla()
             learn_loop(sim_world)
-        except RuntimeError as e:
+        except RuntimeError:
             print("main exception")
             time.sleep(0.1)
         except KeyboardInterrupt as e:
