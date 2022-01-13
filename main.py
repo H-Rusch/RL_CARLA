@@ -1,6 +1,8 @@
 from __future__ import print_function
 import os
 
+import platform
+
 from RL_Agent import DQNAgent, MODEL_NAME
 from CheckpointManager import CheckpointManager
 from Simulator import CarEnvironment
@@ -46,6 +48,8 @@ import carla
 PORT = 2000
 HOST = "127.0.0.1"
 
+EXECUTABLE = "CarlaUE4.exe" if platform.system() == "Windows" else "CarlaUE4.sh"
+
 MEMORY_FRACTION = 0.4
 MIN_REWARD = 4
 
@@ -67,8 +71,7 @@ load_model_name = None
 
 def start_carla():
     print("startCarla")
-    # todo linux konform machen durch pfad connector
-    subprocess.Popen("..\\..\\CarlaUE4.exe -quality-level=Low -ResX=300 -ResY=200")
+    subprocess.Popen(f"../../{EXECUTABLE} -quality-level=Low -ResX=300 -ResY=200")
     time.sleep(3)
 
     while True:
