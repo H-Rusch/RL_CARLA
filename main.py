@@ -67,19 +67,26 @@ load_model_name = None
 
 def start_carla():
     print("startCarla")
+    # todo linux konform machen durch pfad connector
     subprocess.Popen("..\\..\\CarlaUE4.exe -quality-level=Low -ResX=300 -ResY=200")
     time.sleep(3)
 
     while True:
-
         try:
             client = carla.Client(HOST, PORT)
             client.set_timeout(5.0)
             map_name = client.get_world().get_map().name
-            # TODO layer unloaden, in dem kleine Sachen sind, die Kollisionen verursachen könnten, die wir nicht gebrauchen können.
+
             if map_name != "Town02_Opt":
                 client.load_world("Town02_Opt")
                 time.sleep(1)
+
+                client.get_world().unload_map_layer(carla.MapLayer.Foliage)
+                time.sleep(1)
+
+                client.get_world().unload_map_layer(carla.MapLayer.Props)
+                time.sleep(1)
+
             return client.get_world()
         except RuntimeError:
             time.sleep(0.1)
@@ -207,6 +214,7 @@ def learn_loop(sim_world):
 def save_model(model_name, agent):
     print("save ", model_name)
     global load_model_name
+
     agent.model.save(model_name)
     load_model_name = model_name
 

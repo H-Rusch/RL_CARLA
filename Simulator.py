@@ -370,7 +370,7 @@ class CameraManager(object):
         if self.show:
             self.rgb_camera = self._parent.get_world() \
                 .spawn_actor(self.sensors[0][-1],
-                             self._camera_transform_tp[0],
+                             self._camera_transform_fp[0],
                              attach_to=self._parent,
                              attachment_type=self._camera_transform_tp[-1])
             self.rgb_camera.listen(lambda image: self.show_rgb_image(image))
@@ -390,6 +390,7 @@ class CameraManager(object):
         img = img[:, :, :3]
         img = img[:, :, ::-1]
 
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         cv2.imshow("", img)
         cv2.waitKey(0)
 
@@ -403,6 +404,7 @@ class CameraManager(object):
 
         img = lane_detection_from_sem_seg(img)
         self.lane_detection_img = img
+
 
 def lane_detection_from_sem_seg(img):
     """
