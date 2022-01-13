@@ -56,7 +56,7 @@ MIN_REWARD = 4
 EPISODES = 100
 
 epsilon = 1
-EPSILON_DECAY = 0.95
+EPSILON_DECAY = 0.985
 MIN_EPSILON = 0.001
 MIN_EPSILON_2 = 0.01
 
@@ -70,6 +70,12 @@ load_model_name = None
 # ==============================================================================
 
 def start_carla():
+    """
+    Keep trying to start the CARLA simulator.
+    Load the correct Town and unload map layers which might mess up the simulation.
+
+    :return: the world active in the carla simulator
+    """
     print("startCarla")
     subprocess.Popen(f"../../{EXECUTABLE} -quality-level=Low -ResX=300 -ResY=200")
     time.sleep(3)
@@ -78,17 +84,15 @@ def start_carla():
         try:
             client = carla.Client(HOST, PORT)
             client.set_timeout(5.0)
-            map_name = client.get_world().get_map().name
 
-            if map_name != "Town02_Opt":
-                client.load_world("Town02_Opt")
-                time.sleep(1)
+            client.load_world("Town02_Opt")
+            time.sleep(1)
 
-                client.get_world().unload_map_layer(carla.MapLayer.Foliage)
-                time.sleep(1)
+            client.get_world().unload_map_layer(carla.MapLayer.Foliage)
+            time.sleep(1)
 
-                client.get_world().unload_map_layer(carla.MapLayer.Props)
-                time.sleep(1)
+            client.get_world().unload_map_layer(carla.MapLayer.Props)
+            time.sleep(1)
 
             return client.get_world()
         except RuntimeError:
@@ -97,8 +101,7 @@ def start_carla():
 
 def learn_loop(sim_world):
     print("learn start")
-    global epsilon
-    global load_model_name
+    global epsilon, load_model_name
 
     car_environment = None
     agent = None
@@ -133,15 +136,14 @@ def learn_loop(sim_world):
             episode_reward = 0
             step = 1
 
-            # Reset environment and get initial state
+            # reset environment and get initial state
             current_state = car_environment.restart()
 
-            # Reset flag and start iterating until episode ends
-            car_environment.done = False
+            # take the time to be able to stop the episode
             car_environment.episode_start = time.time()
             car_environment.extra_time = 0
 
-            # Play for given number of seconds only
+            # drive until the time runs out
             while True:
                 # get fitting action from Q table for the current state, or select one at random
                 if current_state[3] == 0:
@@ -153,13 +155,10 @@ def learn_loop(sim_world):
                     action = np.random.randint(0, 9)
                     time.sleep(1 / FPS)
 
-                # action = action % 3
                 # execute the action in the environment
                 new_state, reward, done, _ = car_environment.step(action)
 
-                # Transform new continuous state to new discrete state and count reward
                 episode_reward += reward
-                # Every step we update replay memory
                 agent.update_replay_memory((current_state, action, reward, new_state, done))
 
                 current_state = new_state
@@ -168,12 +167,12 @@ def learn_loop(sim_world):
                 if done:
                     break
 
-            # End of episode - destroy agents
+            # clean up the simulator by destroying the car and the sensors
             car_environment.destroy()
-            # Append episode reward to a list and log stats (every given number of episodes)
 
+            # append episode reward to a list and log stats every given number of episodes
             ep_rewards.append(episode_reward)
-            if not episode % AGGREGATE_STATS_EVERY or episode == 1:
+            if episode % AGGREGATE_STATS_EVERY == 0 or episode == 1:
                 average_reward = sum(ep_rewards[-AGGREGATE_STATS_EVERY:]) / len(ep_rewards[-AGGREGATE_STATS_EVERY:])
                 min_reward = min(ep_rewards[-AGGREGATE_STATS_EVERY:])
                 max_reward = max(ep_rewards[-AGGREGATE_STATS_EVERY:])
@@ -244,21 +243,21 @@ def action_to_s(action):
 
 
 # ==============================================================================
-# -- main() --------------------------------------------------------------
+# -- main() --------------------------------------------------------------------
 # ==============================================================================
 
 def main():
-    """Main method"""
-
+    """
+    Keep restarting the simulator and the learning process when the simulator crashes.
+    """
     log_level = logging.INFO
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
     logging.info('listening to server %s:%s', HOST, PORT)
 
-    # create models folder to save the progress in
+    # create models folder
     if not os.path.isdir('models'):
         os.makedirs('models')
 
-    # start the learning process
     while True:
         try:
             sim_world = start_carla()
