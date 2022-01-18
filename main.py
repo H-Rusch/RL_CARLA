@@ -1,8 +1,6 @@
 from __future__ import print_function
 import os
 
-import platform
-
 from RL_Agent import DQNAgent, MODEL_NAME
 from CheckpointManager import CheckpointManager
 from Simulator import CarEnvironment
@@ -12,6 +10,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import glob
 import logging
+import psutil
 import sys
 import subprocess
 
@@ -56,9 +55,9 @@ MIN_REWARD = 4
 EPISODES = 100
 
 epsilon = 1
-EPSILON_DECAY = 0.985
+EPSILON_DECAY = 0.95
 MIN_EPSILON = 0.001
-MIN_EPSILON_2 = 0.01
+MIN_EPSILON_2 = 0.1
 
 AGGREGATE_STATS_EVERY = 10
 
@@ -69,14 +68,29 @@ load_model_name = None
 # -- Game Loop ---------------------------------------------------------
 # ==============================================================================
 
-def start_carla():
-    """
-    Keep trying to start the CARLA simulator.
-    Load the correct Town and unload map layers which might mess up the simulation.
+def kill_processes():
+    for process in psutil.process_iter():
+        if process.name().lower().startswith(EXECUTABLE.split('.')[0].lower()):
+            try:
+                process.terminate()
+            except:
+                pass
+    still_alive = []
+    for process in psutil.process_iter():
+        if process.name().lower().startswith(EXECUTABLE.split('.')[0].lower()):
+            still_alive.append(process)
 
-    :return: the world active in the carla simulator
-    """
-    print("startCarla")
+    # Kill process and wait until it's being killed
+    if len(still_alive):
+        for process in still_alive:
+            try:
+                process.kill()
+            except:
+                pass
+        psutil.wait_procs(still_alive)
+
+def start_carla():
+    kill_processes()
     subprocess.Popen(f"../../{EXECUTABLE} -quality-level=Low -ResX=300 -ResY=200")
     time.sleep(3)
 
@@ -84,24 +98,24 @@ def start_carla():
         try:
             client = carla.Client(HOST, PORT)
             client.set_timeout(5.0)
+            map_name = client.get_world().get_map().name
+        # TODO layer unloaden, in dem kleine Sachen sind, die Kollisionen verursachen könnten, die wir nicht gebrauchen können.
+            if map_name != "Town02_Opt":
+                client.load_world("Town02_Opt")
+                time.sleep(1)
 
-            client.load_world("Town02_Opt")
-            time.sleep(1)
+                client.get_world().unload_map_layer(carla.MapLayer.Foliage)
+                time.sleep(1)
 
-            client.get_world().unload_map_layer(carla.MapLayer.Foliage)
-            time.sleep(1)
-
-            client.get_world().unload_map_layer(carla.MapLayer.Props)
-            time.sleep(1)
-
+                client.get_world().unload_map_layer(carla.MapLayer.Props)
+                time.sleep(1)
             return client.get_world()
-        except RuntimeError:
+        except RuntimeError as e:
             time.sleep(0.1)
 
-
 def learn_loop(sim_world):
-    print("learn start")
-    global epsilon, load_model_name
+    global epsilon
+    global load_model_name
 
     car_environment = None
     agent = None
@@ -109,6 +123,7 @@ def learn_loop(sim_world):
 
     FPS = 60
     ep_rewards = [-200]
+    actions = [1]
 
     try:
         # create car environment in the simulator and our Reinforcement Learning agent
@@ -148,12 +163,16 @@ def learn_loop(sim_world):
                 # get fitting action from Q table for the current state, or select one at random
                 if current_state[3] == 0:
                     action = 1
+                    time.sleep(12 / FPS)
                 elif np.random.random() > epsilon:
                     qs = agent.get_qs(current_state)
                     action = np.argmax(qs)
+                    if len(actions) > 200:
+                        actions.pop(0)
+                    actions.append(action)
                 else:
                     action = np.random.randint(0, 9)
-                    time.sleep(1 / FPS)
+                    time.sleep(12 / FPS)
 
                 # execute the action in the environment
                 new_state, reward, done, _ = car_environment.step(action)
@@ -181,45 +200,43 @@ def learn_loop(sim_world):
 
                 # Save model, but only when min reward is greater or equal a set value
                 if min_reward >= MIN_REWARD:
-                    save_model(
-                        f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
-                        agent)
+                    saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
+
 
             # Decay epsilon
             if epsilon > MIN_EPSILON:
                 epsilon *= EPSILON_DECAY
                 epsilon = max(MIN_EPSILON, epsilon)
-            if epsilon < MIN_EPSILON_2:
+            avg_a = sum(actions) / len(actions)
+            if epsilon < MIN_EPSILON_2 and not any(abs(ac-avg_a) > 1 for ac in actions):
                 epsilon = 0.5
             print(str(episode_reward) + " :Reward|Epsilon: " + str(epsilon))
 
             if episode % 1000 == 0:
-                save_model(
-                    f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
-                    agent)
+                saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)     
+
+        # Set termination flag for training thread and wait for it to finish
+        agent.terminate = True
+        trainer_thread.join()
+        agent.model.save(
+            f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model')
 
     finally:
-        print("learn finally")
         # Set termination flag for training thread and wait for it to finish
         if agent is not None:
             agent.terminate = True
             if trainer_thread is not None:
                 trainer_thread.join()
-            save_model(
-                f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
-                agent)
+            saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
 
         if car_environment is not None:
             car_environment.destroy()
 
-
-def save_model(model_name, agent):
+def saveModel(model_name, agent):
     print("save ", model_name)
     global load_model_name
-
     agent.model.save(model_name)
     load_model_name = model_name
-
 
 def action_to_s(action):
     if action == 0:
@@ -241,9 +258,8 @@ def action_to_s(action):
     elif action == 8:
         return "brake right"
 
-
 # ==============================================================================
-# -- main() --------------------------------------------------------------------
+# -- main() --------------------------------------------------------------
 # ==============================================================================
 
 def main():
@@ -253,21 +269,26 @@ def main():
     log_level = logging.INFO
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
     logging.info('listening to server %s:%s', HOST, PORT)
+    print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
-    # create models folder
+    # create models folder to save the progress in
     if not os.path.isdir('models'):
         os.makedirs('models')
 
-    while True:
-        try:
-            sim_world = start_carla()
-            learn_loop(sim_world)
-        except RuntimeError:
-            print("main exception")
-            time.sleep(0.1)
-        except KeyboardInterrupt as e:
-            print('\nCancelled by user.')
-            raise e
+    # start the learning process
+    try:
+        while True:
+            try:
+                sim_world = start_carla()
+                learn_loop(sim_world)
+            except RuntimeError as e:
+                print("runtime error")
+                time.sleep(0.1)
+            except Exception as e:
+                print("main exception")
+                time.sleep(0.1)
+    except KeyboardInterrupt as e:
+        print('\nCancelled by user.')
 
 
 if __name__ == '__main__':
