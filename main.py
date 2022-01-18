@@ -15,12 +15,12 @@ import psutil
 import sys
 import subprocess
 
+import tensorflow as tf
 import time
 import numpy as np
 
+import threading
 from threading import Thread
-
-import tensorflow as tf
 
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
@@ -92,18 +92,17 @@ def kill_processes():
                 pass
         psutil.wait_procs(still_alive)
 
-
 def start_carla():
-    kill_processes()
-    subprocess.Popen(f"../../{EXECUTABLE} -quality-level=Low -ResX=300 -ResY=200")
-    time.sleep(3)
-
     while True:
+        with open("log.txt", "a") as myfile:
+            myfile.write(time.strftime("%H %M") + ": Carla Start\n")
+        kill_processes()
+        subprocess.Popen(f"../../{EXECUTABLE} -quality-level=Low -ResX=300 -ResY=200")
+        time.sleep(6)
         try:
             client = carla.Client(HOST, PORT)
             client.set_timeout(5.0)
             map_name = client.get_world().get_map().name
-
             if map_name != "Town02_Opt":
                 client.load_world("Town02_Opt")
                 time.sleep(1)
@@ -147,6 +146,7 @@ def learn_loop(sim_world):
 
         episode = 0
         while True:
+            print("Active Threads", threading.active_count())
             episode += 1
             # Update tensorboard step every episode
             agent.tensorboard.step = episode
@@ -188,6 +188,7 @@ def learn_loop(sim_world):
                 step += 1
 
                 if done:
+                    print(actions)
                     break
 
             # clean up the simulator by destroying the car and the sensors
@@ -205,7 +206,8 @@ def learn_loop(sim_world):
                 # Save model, but only when min reward is greater or equal a set value
                 if min_reward >= MIN_REWARD:
                     saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
-
+                    with open("log.txt", "a") as myfile:
+                        myfile.write(time.strftime("%H %M") + ": Save reward\n")
 
             # Decay epsilon
             if epsilon > MIN_EPSILON:
@@ -218,12 +220,12 @@ def learn_loop(sim_world):
 
             if episode % 1000 == 0:
                 saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)     
+                with open("log.txt", "a") as myfile:
+                    myfile.write(time.strftime("%H %M") + ": Save episodes\n")
+            if threading.active_count() < 2:
+                raise RuntimeError()
 
         # Set termination flag for training thread and wait for it to finish
-        agent.terminate = True
-        trainer_thread.join()
-        agent.model.save(
-            f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model')
 
     finally:
         # Set termination flag for training thread and wait for it to finish
@@ -232,7 +234,8 @@ def learn_loop(sim_world):
             if trainer_thread is not None:
                 trainer_thread.join()
             saveModel(f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model', agent)
-
+            with open("log.txt", "a") as myfile:
+                myfile.write(time.strftime("%H %M") + ": Save finally\n")
         if car_environment is not None:
             car_environment.destroy()
 
@@ -286,10 +289,10 @@ def main():
                 sim_world = start_carla()
                 learn_loop(sim_world)
             except RuntimeError as e:
-                print("runtime error")
+                print("runtime error", e)
                 time.sleep(0.1)
             except Exception as e:
-                print("main exception")
+                print("main exception", e)
                 time.sleep(0.1)
     except KeyboardInterrupt as e:
         print('\nCancelled by user.')

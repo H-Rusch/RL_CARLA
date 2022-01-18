@@ -14,7 +14,7 @@ import numpy as np
 # -- Defining Constants --------------------------------------------------------
 # ==============================================================================
 
-REPLAY_MEMORY_SIZE = 5_000
+REPLAY_MEMORY_SIZE = 5000
 MIN_REPLAY_MEMORY_SIZE = 1000
 MINIBATCH_SIZE = 16
 PREDICTION_BATCH_SIZE = 1
@@ -57,17 +57,18 @@ class DQNAgent:
             # network for image processing
             img_network_in = Input(shape=(HEIGHT, WIDTH, 1), name="img_input")
 
-            img_network = Conv2D(64, (5, 5), padding='same', activation='relu')(img_network_in)
+            img_network = Conv2D(32, (5, 5), padding='same', activation='relu')(img_network_in)
             img_network = AveragePooling2D(pool_size=(5, 5), strides=(3, 3), padding='same')(img_network)
 
-            img_network = Conv2D(128, (5, 5), padding='same', activation='relu')(img_network)
+            img_network = Conv2D(64, (3, 3), padding='same', activation='relu')(img_network)
             img_network = AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same')(img_network)
 
-            img_network = Conv2D(256, (3, 3), padding='same', activation='relu')(img_network)
+            img_network = Conv2D(128, (3, 3), padding='same', activation='relu')(img_network)
             img_network = AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same')(img_network)
 
             img_network_out = Flatten()(img_network)
-
+            img_network_out = Dense(256, activation='relu')(img_network_out)
+            img_network_out = Dense(9)(img_network_out)
             # network for additional inputs
             add_network_input = Input(shape=(3,), name="add_input")
             add_network_out = Dense(9, activation='relu')(add_network_input)
@@ -92,7 +93,7 @@ class DQNAgent:
         self.replay_memory.append(transition)
 
     def train(self):
-        print(len(self.replay_memory))
+        #print(len(self.replay_memory))
         if len(self.replay_memory) < MIN_REPLAY_MEMORY_SIZE:
             return
 
@@ -113,8 +114,7 @@ class DQNAgent:
                                (states[i][3] - 50) / 50])
         input_adds = np.asarray(input_adds)
 
-        current_qs_list = self.model.predict({"img_input": input_images, "add_input": input_adds},
-                                             PREDICTION_BATCH_SIZE)
+        current_qs_list = self.model.predict({"img_input": input_images, "add_input": input_adds}, PREDICTION_BATCH_SIZE)
 
         # new
         new_states = [transition[3] for transition in minibatch]
@@ -167,7 +167,7 @@ class DQNAgent:
             self.target_update_counter += 1
 
         if self.target_update_counter > UPDATE_TARGET_EVERY:
-            print("Update")
+            print("Update!!!!!!!!!!!!!!!!")
             self.target_model.set_weights(self.model.get_weights())
             self.target_update_counter = 0
 
