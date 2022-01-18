@@ -1,5 +1,6 @@
 from __future__ import print_function
 import os
+import platform
 
 from RL_Agent import DQNAgent, MODEL_NAME
 from CheckpointManager import CheckpointManager
@@ -18,6 +19,8 @@ import time
 import numpy as np
 
 from threading import Thread
+
+import tensorflow as tf
 
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
@@ -55,7 +58,7 @@ MIN_REWARD = 4
 EPISODES = 100
 
 epsilon = 1
-EPSILON_DECAY = 0.95
+EPSILON_DECAY = 0.985
 MIN_EPSILON = 0.001
 MIN_EPSILON_2 = 0.1
 
@@ -89,6 +92,7 @@ def kill_processes():
                 pass
         psutil.wait_procs(still_alive)
 
+
 def start_carla():
     kill_processes()
     subprocess.Popen(f"../../{EXECUTABLE} -quality-level=Low -ResX=300 -ResY=200")
@@ -99,7 +103,7 @@ def start_carla():
             client = carla.Client(HOST, PORT)
             client.set_timeout(5.0)
             map_name = client.get_world().get_map().name
-        # TODO layer unloaden, in dem kleine Sachen sind, die Kollisionen verursachen könnten, die wir nicht gebrauchen können.
+
             if map_name != "Town02_Opt":
                 client.load_world("Town02_Opt")
                 time.sleep(1)

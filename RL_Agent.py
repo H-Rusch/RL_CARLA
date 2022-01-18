@@ -26,15 +26,14 @@ DISTANCE_DIVISOR = 500
 DISCOUNT = 0.8
 
 
-
 # ==============================================================================
 # -- DQNAgent ------------------------------------------------------------------
 # ==============================================================================
 
 class DQNAgent:
-    def __init__(self, modelName):
-        self.model = self.create_model(modelName)
-        self.target_model = self.create_model(modelName)
+    def __init__(self, model_name):
+        self.model = self.create_model(model_name)
+        self.target_model = self.create_model(model_name)
         self.target_model.set_weights(self.model.get_weights())
 
         self.replay_memory = deque(maxlen=REPLAY_MEMORY_SIZE)
@@ -46,16 +45,15 @@ class DQNAgent:
         self.last_logged_episode = 0
         self.training_initialized = False
 
-    def create_model(self, modelName):
-        print("load ", modelName)
+    def create_model(self, model_name):
         """
         Create a neural network which takes an image, the distance and the angle to the next checkpoint and the current
         velocity of the car as an input.
         The output layer has 9 neurons in total. One for each action the vehicle can take.
         """
+        print("load ", model_name)
 
-        if modelName is None:
-
+        if model_name is None:
             # network for image processing
             img_network_in = Input(shape=(HEIGHT, WIDTH, 1), name="img_input")
 
@@ -86,7 +84,7 @@ class DQNAgent:
             )
 
         else:
-            model = tf.keras.models.load_model(modelName)
+            model = tf.keras.models.load_model(model_name)
 
         return model
 
@@ -94,45 +92,47 @@ class DQNAgent:
         self.replay_memory.append(transition)
 
     def train(self):
-        # TODO das hier aufräumen
         print(len(self.replay_memory))
         if len(self.replay_memory) < MIN_REPLAY_MEMORY_SIZE:
             return
 
         minibatch = random.sample(self.replay_memory, MINIBATCH_SIZE)
 
-        # current
-        current_states = [transition[0] for transition in minibatch]
-        input_imgs = np.asarray([np.asarray(transition[0]).reshape(480, 640, 1) for transition in current_states])
+        # a list of states
+        states = [transition[0] for transition in minibatch]
 
+        # extract images from states
+        input_images = np.asarray(
+            [np.asarray(np.asarray(state_part[0]) / 255).reshape(480, 640) for state_part in states])
+
+        # extract additional information (Distance to checkpoint, Degree to Checkpoint, Speed) from states
+        # those values are converted into values between 0 and 1
         input_adds = []
-        for i in range(0, len(current_states)):
-            input_adds.append([current_states[i][1] / DEGREE_DIVISOR, current_states[i][2] / DISTANCE_DIVISOR,
-                               (current_states[i][3] - 50) / 50])
-
+        for i in range(len(states)):
+            input_adds.append([states[i][1] / DEGREE_DIVISOR, states[i][2] / DISTANCE_DIVISOR,
+                               (states[i][3] - 50) / 50])
         input_adds = np.asarray(input_adds)
 
-        #current_qs_list = self.model.predict_on_batch({"img_input": input_imgs, "add_input": input_adds})
-        current_qs_list = self.model.predict({"img_input": input_imgs, "add_input": input_adds}, PREDICTION_BATCH_SIZE)
+        current_qs_list = self.model.predict({"img_input": input_images, "add_input": input_adds},
+                                             PREDICTION_BATCH_SIZE)
 
         # new
-        new_current_states = [transition[3] for transition in minibatch]
-        input_imgs_new = np.asarray(
-            [np.asarray(transition[0]).reshape(480, 640, 1) for transition in new_current_states])
+        new_states = [transition[3] for transition in minibatch]
+        input_images_new = np.asarray(
+            [np.asarray(np.asarray(state_part[0]) / 255).reshape(480, 640) for state_part in new_states])
 
         input_adds_new = []
-        for i in range(0, len(new_current_states)):
+        for i in range(len(new_states)):
             input_adds_new.append(
-                [new_current_states[i][1] / DEGREE_DIVISOR, new_current_states[i][2] / DISTANCE_DIVISOR,
-                 (new_current_states[i][3] - 50) / 50])
-
+                [new_states[i][1] / DEGREE_DIVISOR, new_states[i][2] / DISTANCE_DIVISOR,
+                 (new_states[i][3] - 50) / 50])
         input_adds_new = np.asarray(input_adds_new)
 
-        #future_qs_list = self.target_model.predict_on_batch({"img_input": input_imgs_new, "add_input": input_adds_new})
-        future_qs_list = self.target_model.predict({"img_input": input_imgs_new, "add_input": input_adds_new}, PREDICTION_BATCH_SIZE)
+        future_qs_list = self.target_model.predict({"img_input": input_images_new, "add_input": input_adds_new},
+                                                   PREDICTION_BATCH_SIZE)
 
-        X_img = []
-        X_add = []
+        x_img = []
+        x_add = []
         y = []
 
         for index, (current_state, action, reward, new_state, done) in enumerate(minibatch):
@@ -145,13 +145,13 @@ class DQNAgent:
             current_qs = current_qs_list[index]
             current_qs[action] = new_q
 
-            X_img.append((np.array(current_state[0]) / 255).reshape(480, 640, 1))
-            X_add.append([(current_state[1] / DEGREE_DIVISOR), (current_state[2] / DISTANCE_DIVISOR),
+            x_img.append((np.array(current_state[0]) / 255).reshape(480, 640, 1))
+            x_add.append([(current_state[1] / DEGREE_DIVISOR), (current_state[2] / DISTANCE_DIVISOR),
                           ((current_state[3] - 50) / 50)])
             y.append(current_qs)
 
-        X_img = np.asarray(X_img)
-        X_add = np.asarray(X_add)
+        x_img = np.asarray(x_img)
+        x_add = np.asarray(x_add)
         y = np.asarray(y)
 
         log_this_step = False
@@ -159,7 +159,8 @@ class DQNAgent:
             log_this_step = True
             self.last_logged_episode = self.tensorboard.step
 
-        self.model.fit({"img_input": X_img, "add_input": X_add}, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0, shuffle=False,
+        self.model.fit({"img_input": x_img, "add_input": x_add}, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0,
+                       shuffle=False,
                        callbacks=[self.tensorboard] if log_this_step else None)
 
         if log_this_step:
@@ -183,17 +184,6 @@ class DQNAgent:
         return qs[0]
 
     def train_in_loop(self):
-
-        # if START_MODEL is None:
-        # initialize the neural network with random/ default values
-        # img_in = np.random.uniform(size=(1, HEIGHT, WIDTH, 1)).astype(np.float32)
-        # add_in = np.asarray([0.0, 0.5, 0.0]).astype(np.float32)
-        # add_in = add_in.reshape(1, -1)
-
-        # y = np.random.uniform(size=(1, 9)).astype(np.float32)
-
-        # self.model.fit(x={"img_input": img_in, "add_input": add_in}, y=y, verbose=False, batch_size=1)
-
         self.training_initialized = True
 
         while True:
