@@ -144,8 +144,8 @@ class CarEnvironment(object):
                 reward += 100
                 done = True
 
+        kmh = self.vehicle.get_kmh()
         if not done:
-            kmh = self.vehicle.get_kmh()
 
             if len(self.collision_sensor.history) != 0:
                 done = True
@@ -171,7 +171,7 @@ class CarEnvironment(object):
         elif distance > self.checkpoint_distance:
             reward -= 0.1
 
-        if kmh == 0 and self.checkpoint_manager.current == 0:
+        if not done and kmh == 0 and self.checkpoint_manager.current == 0:
             reward = 0
         return current_state, reward, done, None
 
