@@ -157,6 +157,7 @@ def learn_loop(sim_world):
             # Restarting episode - reset episode reward and step number
             episode_reward = 0
             step = 1
+            standing = True
 
             # reset environment and get initial state
             current_state = car_environment.restart()
@@ -167,8 +168,13 @@ def learn_loop(sim_world):
 
             # drive until the time runs out
             while True:
+                if standing and current_state[3] != 0:
+                    standing = False
                 # get fitting action from Q table for the current state, or select one at random
-                if np.random.random() > epsilon:
+                if current_state[3] == 0:
+                    action = 1
+                    time.sleep(12 / FPS)
+                elif np.random.random() > epsilon:
                     qs = agent.get_qs(current_state)
                     #print(qs)
                     action = np.argmax(qs)
@@ -182,8 +188,9 @@ def learn_loop(sim_world):
                 # execute the action in the environment
                 new_state, reward, done, _ = car_environment.step(action)
 
-                episode_reward += reward
-                agent.update_replay_memory((current_state, action, reward, new_state, done))
+                if not standing:
+                    episode_reward += reward
+                    agent.update_replay_memory((current_state, action, reward, new_state, done))
 
                 current_state = new_state
                 step += 1
