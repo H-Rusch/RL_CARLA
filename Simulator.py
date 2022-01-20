@@ -100,7 +100,7 @@ class CarEnvironment(object):
 
         while self.camera_manager.lane_detection_img is None:
             time.sleep(0.01)
-
+        
         time.sleep(1)
 
         self.episode_start = time.time()
@@ -130,7 +130,6 @@ class CarEnvironment(object):
             time_left = (self.episode_start + SECONDS_PER_EPISODE + self.extra_time) - time.time()
             if time_left > 0:
                 reward += time_left / 5
-
             self.checkpoint_manager.toggle_next()
 
             self.extra_time += 10
@@ -412,7 +411,6 @@ class CameraManager(object):
         img = lane_detection_from_sem_seg(img)
         self.lane_detection_img = img
 
-
 def lane_detection_from_sem_seg(img):
     """
     Convert a semantic segmentation image into a black and white image where only the contours of the road are highlighted.
@@ -426,10 +424,15 @@ def lane_detection_from_sem_seg(img):
     # CARLA uses RGB, so the tuple can be as is.
 
     # color of lane marking (157, 234, 50)
-    lower_mask = np.array([147, 224, 40])
-    upper_mask = np.array([167, 244, 60])
+    lower_mask = np.array([145, 190, 40])
+    upper_mask = np.array([167, 255, 80])
     masked_marking = cv2.inRange(img, lower_mask, upper_mask)
-
+    #dilate lane marking mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
+    masked_marking = cv2.dilate(masked_marking, kernel, iterations=3)
+    #color lane marking as road
+    img[masked_marking>240] = [128,64,128]
+    
     # color of the street (128, 64, 128)
     lower_mask = np.array([118, 54, 118])
     upper_mask = np.array([138, 74, 138])
@@ -437,21 +440,7 @@ def lane_detection_from_sem_seg(img):
 
     masked_image = cv2.bitwise_or(masked_marking, masked_street)
 
-    # find the contour with the largest area which is the street
-    contours, _ = cv2.findContours(masked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-    street, largest_area = None, 0
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area > largest_area:
-            largest_area = area
-            street = contour
-
-    cv2.drawContours(img_output, street, -1, (255, 255, 255), 1)
-
-    img_output = cv2.cvtColor(img_output, cv2.COLOR_BGR2GRAY)
-
-    return img_output
+    return masked_image
 
 
 # ==============================================================================
