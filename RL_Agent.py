@@ -1,14 +1,15 @@
 from ModifiedTensorboard import ModifiedTensorBoard
-from Simulator import DEGREE_DIVISOR, WIDTH, HEIGHT
+from Simulator import DEGREE_DIVISOR, WIDTH, HEIGHT, TARGET_SPEED
 
 from collections import deque
-from keras.layers import Dense, Conv2D, AveragePooling2D, Flatten, Input, Concatenate
+from keras.layers import Dense, Conv2D, AveragePooling2D, Flatten, Input, Concatenate, LeakyReLU
 from keras.models import Model
 
 import tensorflow as tf
 import random
 import time
 import numpy as np
+import cv2
 
 # ==============================================================================
 # -- Defining Constants --------------------------------------------------------
@@ -23,7 +24,8 @@ UPDATE_TARGET_EVERY = 5
 MODEL_NAME = "CNN"
 
 DISTANCE_DIVISOR = 500
-DISCOUNT = 0.8
+DISCOUNT = 0.99
+
 
 
 # ==============================================================================
@@ -57,13 +59,16 @@ class DQNAgent:
             # network for image processing
             img_network_in = Input(shape=(HEIGHT, WIDTH, 1), name="img_input")
 
-            img_network = Conv2D(32, (5, 5), padding='same', activation='relu')(img_network_in)
+            img_network = Conv2D(32, (5, 5), padding='same')(img_network_in)
+            img_network = LeakyReLU(alpha=0.1)(img_network)
             img_network = AveragePooling2D(pool_size=(5, 5), strides=(3, 3), padding='same')(img_network)
 
-            img_network = Conv2D(64, (3, 3), padding='same', activation='relu')(img_network)
+            img_network = Conv2D(64, (3, 3), padding='same')(img_network)
+            img_network = LeakyReLU(alpha=0.1)(img_network)
             img_network = AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same')(img_network)
 
-            img_network = Conv2D(128, (3, 3), padding='same', activation='relu')(img_network)
+            img_network = Conv2D(128, (3, 3), padding='same')(img_network)
+            img_network = LeakyReLU(alpha=0.1)(img_network)
             img_network = AveragePooling2D(pool_size=(3, 3), strides=(2, 2), padding='same')(img_network)
 
             img_network_out = Flatten()(img_network)
@@ -79,7 +84,7 @@ class DQNAgent:
 
             model = Model(inputs=[img_network_in, add_network_input], outputs=concat_model_out)
             model.compile(
-                loss="categorical_crossentropy",
+                loss="mse",
                 optimizer='adam',
                 metrics=["accuracy"]
             )
@@ -111,9 +116,11 @@ class DQNAgent:
         input_adds = []
         for i in range(len(states)):
             input_adds.append([states[i][1] / DEGREE_DIVISOR, states[i][2] / DISTANCE_DIVISOR,
-                               (states[i][3] - 50) / 50])
+                               (states[i][3] - TARGET_SPEED) / TARGET_SPEED])
         input_adds = np.asarray(input_adds)
 
+        #cv2.imshow("", input_images[0])
+        #cv2.waitKey(10)
         current_qs_list = self.model.predict({"img_input": input_images, "add_input": input_adds}, PREDICTION_BATCH_SIZE)
 
         # new
@@ -125,9 +132,11 @@ class DQNAgent:
         for i in range(len(new_states)):
             input_adds_new.append(
                 [new_states[i][1] / DEGREE_DIVISOR, new_states[i][2] / DISTANCE_DIVISOR,
-                 (new_states[i][3] - 50) / 50])
+                 (new_states[i][3] - TARGET_SPEED) / TARGET_SPEED])
         input_adds_new = np.asarray(input_adds_new)
 
+        #cv2.imshow("", input_images_new[0])
+        #cv2.waitKey(10)
         future_qs_list = self.target_model.predict({"img_input": input_images_new, "add_input": input_adds_new},
                                                    PREDICTION_BATCH_SIZE)
 
@@ -145,9 +154,9 @@ class DQNAgent:
             current_qs = current_qs_list[index]
             current_qs[action] = new_q
 
-            x_img.append((np.array(current_state[0]) / 255).reshape(480, 640, 1))
+            x_img.append((np.array(current_state[0]) / 255).reshape(480, 640))
             x_add.append([(current_state[1] / DEGREE_DIVISOR), (current_state[2] / DISTANCE_DIVISOR),
-                          ((current_state[3] - 50) / 50)])
+                          ((current_state[3] - TARGET_SPEED) / TARGET_SPEED)])
             y.append(current_qs)
 
         x_img = np.asarray(x_img)
@@ -158,6 +167,10 @@ class DQNAgent:
         if self.tensorboard.step > self.last_logged_episode:
             log_this_step = True
             self.last_logged_episode = self.tensorboard.step
+
+
+        #cv2.imshow("", x_img[0])
+        #cv2.waitKey(10)
 
         self.model.fit({"img_input": x_img, "add_input": x_add}, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0,
                        shuffle=False,
@@ -173,10 +186,12 @@ class DQNAgent:
 
     def get_qs(self, state):
         img_in = np.asarray(state[0]) / 255
-        add_in = np.asarray([state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR, (state[3] - 50) / 50],
+        add_in = np.asarray([state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR, (state[3] - TARGET_SPEED) / TARGET_SPEED],
                             dtype=np.float32)
         add_in = add_in.reshape(1, -1)
 
+        #cv2.imshow("", img_in.reshape(480, 640))
+        #cv2.waitKey(10)
         qs = self.model.predict(
             x={"img_input": img_in, "add_input": add_in}
         )

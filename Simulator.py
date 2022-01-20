@@ -39,6 +39,7 @@ from carla import ColorConverter as cc, Transform, Location, Rotation
 WIDTH = 640
 HEIGHT = 480
 
+TARGET_SPEED = 35
 DEGREE_DIVISOR = 360
 
 SHOW_IMAGE = False
@@ -100,6 +101,8 @@ class CarEnvironment(object):
         while self.camera_manager.lane_detection_img is None:
             time.sleep(0.01)
 
+        time.sleep(1)
+
         self.episode_start = time.time()
 
         return self.get_state()
@@ -150,7 +153,7 @@ class CarEnvironment(object):
             if len(self.collision_sensor.history) != 0:
                 done = True
                 reward -= 10
-            elif kmh < 35:
+            elif kmh < TARGET_SPEED:
                 done = False
                 reward -= 0.01
             else:
@@ -204,6 +207,10 @@ class CarEnvironment(object):
         raw_angle = math.degrees(raw_angle)
 
         angle = int((raw_angle - vehicle_transform.rotation.yaw) % DEGREE_DIVISOR)
+        if angle > 180:
+            angle -= 180
+        elif angle < 180:
+            angle += 180
 
         return distance, angle
 

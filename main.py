@@ -2,6 +2,8 @@ from __future__ import print_function
 import os
 import platform
 
+import cv2
+
 from RL_Agent import DQNAgent, MODEL_NAME
 from CheckpointManager import CheckpointManager
 from Simulator import CarEnvironment
@@ -13,6 +15,7 @@ import glob
 import logging
 import psutil
 import sys
+import traceback
 import subprocess
 
 import tensorflow as tf
@@ -141,7 +144,7 @@ def learn_loop(sim_world):
             time.sleep(0.01)
 
         if load_model_name is None:
-            start_state = np.ones((1, HEIGHT, WIDTH, 1)), 1, 1, 1
+            start_state = np.ones((1, HEIGHT, WIDTH, 1)) * 255, 1, 1, 1
             agent.get_qs(start_state)
 
         episode = 0
@@ -167,6 +170,7 @@ def learn_loop(sim_world):
                 # get fitting action from Q table for the current state, or select one at random
                 if np.random.random() > epsilon:
                     qs = agent.get_qs(current_state)
+                    #print(qs)
                     action = np.argmax(qs)
                     if len(actions) > 200:
                         actions.pop(0)
@@ -287,9 +291,11 @@ def main():
                 learn_loop(sim_world)
             except RuntimeError as e:
                 print("runtime error", e)
+                print(traceback.format_exc())
                 time.sleep(0.1)
             except Exception as e:
                 print("main exception", e)
+                print(traceback.format_exc())
                 time.sleep(0.1)
     except KeyboardInterrupt as e:
         print('\nCancelled by user.')
