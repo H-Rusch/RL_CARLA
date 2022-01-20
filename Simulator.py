@@ -152,6 +152,9 @@ class CarEnvironment(object):
             if len(self.collision_sensor.history) != 0:
                 done = True
                 reward -= 10
+            elif kmh < 5:
+                done = False
+                reward -= 0.5
             elif kmh < TARGET_SPEED:
                 done = False
                 reward -= 0.01
