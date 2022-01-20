@@ -173,8 +173,6 @@ class CarEnvironment(object):
         elif distance > self.checkpoint_distance:
             reward -= 0.1
 
-        if not done and kmh == 0 and self.checkpoint_manager.current == 0:
-            reward = 0
         return current_state, reward, done, None
 
     def get_state(self):
@@ -417,6 +415,7 @@ def lane_detection_from_sem_seg(img):
     :param img: the image returned form the semantic segmentation camera
     :return: a black and white image containing the road edges
     """
+    imgCopy = np.copy(img)
     height, width, channels = img.shape
     img_output = np.zeros((height, width, 3), np.uint8)
 
@@ -426,17 +425,17 @@ def lane_detection_from_sem_seg(img):
     # color of lane marking (157, 234, 50)
     lower_mask = np.array([145, 190, 40])
     upper_mask = np.array([167, 255, 80])
-    masked_marking = cv2.inRange(img, lower_mask, upper_mask)
+    masked_marking = cv2.inRange(imgCopy, lower_mask, upper_mask)
     #dilate lane marking mask
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
     masked_marking = cv2.dilate(masked_marking, kernel, iterations=3)
     #color lane marking as road
-    img[masked_marking>240] = [128,64,128]
+    imgCopy[masked_marking>240] = [128,64,128]
     
     # color of the street (128, 64, 128)
     lower_mask = np.array([118, 54, 118])
     upper_mask = np.array([138, 74, 138])
-    masked_street = cv2.inRange(img, lower_mask, upper_mask)
+    masked_street = cv2.inRange(imgCopy, lower_mask, upper_mask)
 
     masked_image = cv2.bitwise_or(masked_marking, masked_street)
 
