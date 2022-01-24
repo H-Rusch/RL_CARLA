@@ -182,12 +182,12 @@ class CarEnvironment(object):
         # current camera image
         img = self.camera_manager.lane_detection_img
 
-        # angle and distance to the next checkpoint
-        distance, angle = self.get_next_checkpoint_state()
+        # direction and distance to the next checkpoint
+        distance, direction = self.get_next_checkpoint_state()
 
         kmh = self.vehicle.get_kmh()
 
-        return [img], angle, distance, kmh
+        return [img], direction, distance, kmh
 
     def get_next_checkpoint_state(self) -> tuple:
         vehicle_transform = self.vehicle.actor.get_transform()
@@ -199,20 +199,23 @@ class CarEnvironment(object):
 
         # calculate the angle between the car and the checkpoint by computing the atan2 and
         # normalizing the angle to a value in [0, 360)
-        # 1 is one ° to the left, 359 is one ° to the right
+        # 1 is one degree to the right, 359 is one degree to the left
         c_x, c_y = checkpoint_location.x, checkpoint_location.y
         v_x, v_y = vehicle_transform.location.x, vehicle_transform.location.y
 
         raw_angle = math.atan2(c_y - v_y, c_x - v_x)
         raw_angle = math.degrees(raw_angle)
 
-        angle = int((raw_angle - vehicle_transform.rotation.yaw) % DEGREE_DIVISOR)
-        if angle > 180:
-            angle -= 180
-        elif angle < 180:
-            angle += 180
+        direction = int((raw_angle - vehicle_transform.rotation.yaw) % DEGREE_DIVISOR)
 
-        return distance, angle
+        # set 180 as the value for going straight
+        # 179 is one degree to the left, 181 is one degree to the right
+        if direction > 180:
+            direction -= 180
+        elif direction < 180:
+            direction += 180
+
+        return distance, direction
 
     def destroy(self):
         """Destroys all actors"""
