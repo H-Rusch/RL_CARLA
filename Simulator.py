@@ -100,7 +100,7 @@ class CarEnvironment(object):
 
         while self.camera_manager.lane_detection_img is None:
             time.sleep(0.01)
-        
+
         time.sleep(1)
 
         self.episode_start = time.time()
@@ -415,15 +415,13 @@ class CameraManager(object):
         img = lane_detection_from_sem_seg(img)
         self.lane_detection_img = img
 
+
 def lane_detection_from_sem_seg(img):
     """
-    Convert a semantic segmentation image into a black and white image where only the contours of the road are highlighted.
+    Convert a semantic segmentation image into a black and white image where only road is highlighted.
     :param img: the image returned form the semantic segmentation camera
-    :return: a black and white image containing the road edges
+    :return: a black and white image containing the road's surface in white
     """
-    imgCopy = np.copy(img)
-    height, width, channels = img.shape
-    img_output = np.zeros((height, width, 3), np.uint8)
 
     # cv2 uses BRG, so when using cv2 the tuple has to be reversed.
     # CARLA uses RGB, so the tuple can be as is.
@@ -431,17 +429,12 @@ def lane_detection_from_sem_seg(img):
     # color of lane marking (157, 234, 50)
     lower_mask = np.array([145, 190, 40])
     upper_mask = np.array([167, 255, 80])
-    masked_marking = cv2.inRange(imgCopy, lower_mask, upper_mask)
-    #dilate lane marking mask
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
-    masked_marking = cv2.dilate(masked_marking, kernel, iterations=3)
-    #color lane marking as road
-    imgCopy[masked_marking>240] = [128,64,128]
-    
+    masked_marking = cv2.inRange(img, lower_mask, upper_mask)
+
     # color of the street (128, 64, 128)
     lower_mask = np.array([118, 54, 118])
     upper_mask = np.array([138, 74, 138])
-    masked_street = cv2.inRange(imgCopy, lower_mask, upper_mask)
+    masked_street = cv2.inRange(img, lower_mask, upper_mask)
 
     masked_image = cv2.bitwise_or(masked_marking, masked_street)
 
