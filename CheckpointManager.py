@@ -72,9 +72,8 @@ import carla
 class CheckpointManager:
     """
     Class maintaining the list of checkpoints the car has to go through. The next checkpoint the car should drive to is
-    active. When a car goes through a checkpoint the next one will be selected as active.
+    active.
     """
-
     def __init__(self):
         self.checkpoints = []
         self.current = 0
@@ -117,7 +116,7 @@ class CheckpointManager:
     def toggle_next(self):
         self.current += 1
 
-    def check_finished(self):
+    def check_finished(self) -> bool:
         return self.current >= len(self.checkpoints)
 
 
