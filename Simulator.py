@@ -4,9 +4,10 @@ import sys
 
 import time
 import math
+import random
+
 import cv2
 import numpy as np
-import numpy.random as numpy_random
 
 from CheckpointManager import CheckpointManager
 
@@ -81,7 +82,7 @@ class CarEnvironment(object):
     def restart(self):
         """
         Restart the world by cleaning up old sensors and spawning them again.
-        :returns: The current state the environment
+        :returns: The current state the environment. See 'Simulation.get_state()'
         """
 
         # clean up old objects
@@ -92,12 +93,13 @@ class CarEnvironment(object):
         # spawn the actor
         self.vehicle.spawn_actor()
 
-        # Set up and spawn the sensors.
+        # set up and spawn the sensors
         self.camera_manager = CameraManager(self.vehicle.actor, show_image=SHOW_IMAGE)
         self.collision_sensor = CollisionSensor(self.vehicle.actor)
 
         self.camera_manager.spawn_cameras()
 
+        # wait until images are recorded
         while self.camera_manager.lane_detection_img is None:
             time.sleep(0.01)
 
@@ -110,9 +112,8 @@ class CarEnvironment(object):
     def step(self, action: int) -> tuple:
         """
         Execute a step in the car environment. The actor will be rewarded based on the action he took.
-        If the actor collides into something, the episode should be ended and he is severely punished.
-        If the actor is going under 50 kmh the actor is mildly punished, but if the actor is going over 50 kmh he is
-        mildly rewarded instead.
+        If the actor manages to drive through a checkpoint, the next one will be toggled and the maximum time of the
+        current episode will be incremented.
 
         :param action: the action the car should perform, selected by the neural network
         :return: a tuple of (current state the actor is in; the reward earned in this step; an information whether the
@@ -178,7 +179,14 @@ class CarEnvironment(object):
 
         return current_state, reward, done, None
 
-    def get_state(self):
+    def get_state(self) -> tuple:
+        """
+        Get the current state of the actor in the simulation.
+
+        :return: tuple containing the preprocessed camera image, the direction the next checkpoint is in, the distance
+        to the next checkpoint and the vehicles speed
+        """
+
         # current camera image
         img = self.camera_manager.lane_detection_img
 
@@ -190,6 +198,13 @@ class CarEnvironment(object):
         return [img], direction, distance, kmh
 
     def get_next_checkpoint_state(self) -> tuple:
+        """
+        Calculate the distance and angle to the next active checkpoint. The angle should have 180 as the mid point, so
+        a value lower than 180 means the checkpoint is on the left, and a value greater than 180 means the checkpoint
+        is on the right.
+
+        :return: tuple containing the distance and the angle to the next active checkpoint
+        """
         vehicle_transform = self.vehicle.actor.get_transform()
 
         checkpoint = self.checkpoint_manager.checkpoints[self.checkpoint_manager.current]
@@ -234,17 +249,17 @@ class CarEnvironment(object):
 # ==============================================================================
 
 class Vehicle:
-    """Class representing the vehicle in the simulation. """
+    """Class representing the vehicle in the simulation """
 
     def __init__(self, world: CarEnvironment):
         self.actor = None
         self.world = world
 
-        # the cars model
-        self.blueprint = numpy_random.choice(self.world.world.get_blueprint_library().filter("model3"))
+        # get the model for a car
+        self.blueprint = random.choice(self.world.world.get_blueprint_library().filter("model3"))
         self.blueprint.set_attribute('role_name', 'hero')
 
-        # spawn point of the car
+        # define fixed spawn point for a car
         x, y, z = SPAWN_LOCATION
         self.spawn_point = carla.Transform(carla.Location(x=x, y=y, z=z), carla.Rotation(yaw=180))
 
@@ -321,13 +336,13 @@ class Vehicle:
 # ==============================================================================
 
 class CameraManager(object):
-    """ Class for camera management"""
+    """ Class for camera management """
 
     def __init__(self, parent_actor, show_image: bool = False):
         """
         Constructor Method
         :param parent_actor: the actor the cameras are attached to
-        :param show_image: show the image the camera records
+        :param show_image: information whether the image the camera records should be shown
         """
         self.rgb_camera = None
         self.sem_seg_camera = None
@@ -337,11 +352,9 @@ class CameraManager(object):
         self.show = show_image
         self._parent = parent_actor
 
-        # transforms for camera
-        # first person
+        # transforms for camera. A first-person-view and a third-person-view are defined
         self._camera_transform_fp = (carla.Transform(
             carla.Location(x=2.2, z=1)), carla.AttachmentType.Rigid)
-        # third person
         self._camera_transform_tp = (carla.Transform(
             carla.Location(x=-5.5, z=2.5)), carla.AttachmentType.Rigid)
 
@@ -412,8 +425,7 @@ class CameraManager(object):
         img = img[:, :, :3]
         img = img[:, :, ::-1]
 
-        img = lane_detection_from_sem_seg(img)
-        self.lane_detection_img = img
+        self.lane_detection_img = lane_detection_from_sem_seg(img)
 
 
 def lane_detection_from_sem_seg(img):
@@ -446,7 +458,7 @@ def lane_detection_from_sem_seg(img):
 # ==============================================================================
 
 class CollisionSensor(object):
-    """ Class for collision sensors"""
+    """ Class for collision sensors """
 
     def __init__(self, parent_actor):
         """Constructor method. Spawn the sensor attached to a parent actor in the simulation. """
@@ -465,6 +477,9 @@ class CollisionSensor(object):
         self.sensor = None
 
     def on_collision(self, event):
+        """
+        Append a collision to the collision history.
+        """
         impulse = event.normal_impulse
         intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
         self.history.append((event.frame, intensity))
