@@ -39,19 +39,19 @@ class CheckpointManager:
         self.current = 0
 
     def init_checkpoints(self):
-        self.checkpoints.append(Checkpoint((56.29, 300.03), (59.0, 310.61)))  # 1
+        self.checkpoints.append(Checkpoint((56.29, 300.03), (60.0, 310.61)))  # 1
         self.checkpoints.append(Checkpoint((40.56, 290.16), (47.28, 294.21)))  # 2
         self.checkpoints.append(Checkpoint((39.88, 270.72), (47.94, 274.30)))  # 3
         self.checkpoints.append(Checkpoint((39.65, 249.20), (47.81, 253.73)))  # 4
         self.checkpoints.append(Checkpoint((54.45, 235.06), (60.21, 243.01)))  # 5
-        self.checkpoints.append(Checkpoint((81.25, 234.85), (60.21, 243.01)))  # 6
+        self.checkpoints.append(Checkpoint((60.25, 234.85), (67.21, 243.01)))  # 6
         self.checkpoints.append(Checkpoint((101.19, 234.56), (105.04, 242.99)))  # 7
         self.checkpoints.append(Checkpoint((121.11, 234.95), (125.84, 242.78)))  # 8
         self.checkpoints.append(Checkpoint((130.34, 225.01), (138.09, 229.04)))  # 9
         self.checkpoints.append(Checkpoint((130.26, 211.45), (138.26, 215.02)))  # 10
         self.checkpoints.append(Checkpoint((130.03, 199.36), (138.28, 202.17)))  # 11
         self.checkpoints.append(Checkpoint((142.63, 187.11), (146.67, 193.79)))  # 12
-        self.checkpoints.append(Checkpoint((164.83, 185.64), (158.93, 193.39)))  # 13
+        self.checkpoints.append(Checkpoint((158.83, 185.64), (164.93, 193.39)))  # 13
         self.checkpoints.append(Checkpoint((178.83, 185.67), (183.42, 193.82)))  # 14
         self.checkpoints.append(Checkpoint((187.23, 199.77), (193.71, 202.44)))  # 15
         self.checkpoints.append(Checkpoint((187.68, 211.07), (195.74, 214.72)))  # 16
@@ -92,6 +92,8 @@ class Checkpoint:
         self.bottom_right = p1
 
     def is_inbounds(self, pos: tuple) -> bool:
+        print("Top Left 0", self.top_left[0], "Pos 0", pos[0], "Bot Right 0", self.bottom_right[0])
+        print("Top Left 1", self.top_left[1], "Pos 1", pos[1], "Bot Right 1", self.bottom_right[1])
         return self.top_left[0] <= pos[0] <= self.bottom_right[0] and \
                self.top_left[1] <= pos[1] <= self.bottom_right[1]
 
