@@ -246,21 +246,35 @@ class World(object):
         distance = int(vehicle_transform.location.distance(checkpoint_location))
 
         # calculate the angle between the car and the checkpoint by computing the atan2 and
-        # normalizing the angle to a value in [0, 360]
+        # normalizing the angle to a value in [0, 360)
+        # 1 is one degree to the right, 359 is one degree to the left
         c_x, c_y = checkpoint_location.x, checkpoint_location.y
         v_x, v_y = vehicle_transform.location.x, vehicle_transform.location.y
 
         raw_angle = math.atan2(c_y - v_y, c_x - v_x)
         raw_angle = math.degrees(raw_angle)
-        print(raw_angle)
-        print(vehicle_transform.rotation.yaw)
 
-        # angle = (vehicle_transform.rotation.yaw + raw_angle) % 360
-        angle = int((vehicle_transform.rotation.yaw - raw_angle) % 360)
+        direction = int((raw_angle - vehicle_transform.rotation.yaw) % 360)
 
-        print(f"distance: {distance}, angle: {angle}")
+        # set 180 as the value for going straight
+        # 179 is one degree to the left, 181 is one degree to the right
+        if direction > 180:
+            direction -= 180
+        elif direction < 180:
+            direction += 180
 
-        return distance, angle
+        dx = v_x - c_x
+        dy = v_y - c_y
+        raw_angle2 = math.atan2(dy, dx)
+        raw_angle2 = math.degrees(raw_angle2)
+
+        direction2 = int((raw_angle2 - vehicle_transform.rotation.yaw) % 360)
+
+        print(f"OLD: distance: {distance}, angle: {direction}")
+        print(f"NEW: distance: {distance}, angle: {direction2}")
+        print()
+
+        return distance, direction
 
     def restart(self):
         self.player_max_speed = 1.589
@@ -269,8 +283,10 @@ class World(object):
         cam_index = self.camera_manager.index if self.camera_manager is not None else 0
         cam_pos_index = self.camera_manager.transform_index if self.camera_manager is not None else 0
         # Get a random blueprint.
-        blueprint = random.choice(get_actor_blueprints(self.world, self._actor_filter, self._actor_generation))
-        blueprint.set_attribute('role_name', self.actor_role_name)
+        blueprint = random.choice(self.world.get_blueprint_library().filter("model3"))
+        blueprint.set_attribute('role_name', 'hero')
+        # blueprint = random.choice(get_actor_blueprints(self.world, self._actor_filter, self._actor_generation))
+        # blueprint.set_attribute('role_name', self.actor_role_name)
         if blueprint.has_attribute('color'):
             color = random.choice(blueprint.get_attribute('color').recommended_values)
             blueprint.set_attribute('color', color)
@@ -1104,8 +1120,7 @@ class CameraManager(object):
              {'lens_circle_multiplier': '3.0',
               'lens_circle_falloff': '3.0',
               'chromatic_aberration_intensity': '0.5',
-              'chromatic_aberration_offset': '0'}],
-            ['sensor.camera.optical_flow', cc.Raw, 'Optical Flow', {}],
+              'chromatic_aberration_offset': '0'}]
         ]
         world = self._parent.get_world()
         bp_library = world.get_blueprint_library()
