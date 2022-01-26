@@ -1,7 +1,5 @@
-from ModifiedTensorboard import ModifiedTensorBoard
 from Simulator import DEGREE_DIVISOR, WIDTH, HEIGHT, TARGET_SPEED
 
-from collections import deque
 from keras.layers import Dense, Conv2D, AveragePooling2D, Flatten, Input, Concatenate, LeakyReLU
 from keras.models import Model
 
@@ -27,19 +25,20 @@ DISTANCE_DIVISOR = 500
 DISCOUNT = 0.99
 
 
+
 # ==============================================================================
 # -- DQNAgent ------------------------------------------------------------------
 # ==============================================================================
 
 class DQNAgent:
-    def __init__(self, model_name):
+    def __init__(self, model_name, tensorboard, replay_memory):
         self.model = self.create_model(model_name)
         self.target_model = self.create_model(model_name)
         self.target_model.set_weights(self.model.get_weights())
 
-        self.replay_memory = deque(maxlen=REPLAY_MEMORY_SIZE)
+        self.replay_memory = replay_memory
 
-        self.tensorboard = ModifiedTensorBoard(log_dir=f"logs/{MODEL_NAME}-{int(time.time())}")
+        self.tensorboard = tensorboard
         self.target_update_counter = 0
 
         self.terminate = False

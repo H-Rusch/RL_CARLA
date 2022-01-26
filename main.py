@@ -2,9 +2,9 @@ from __future__ import print_function
 import os
 import platform
 
-import cv2
-
-from RL_Agent import DQNAgent, MODEL_NAME
+from collections import deque
+from ModifiedTensorboard import ModifiedTensorBoard
+from RL_Agent import DQNAgent, MODEL_NAME, REPLAY_MEMORY_SIZE
 from CheckpointManager import CheckpointManager
 from Simulator import CarEnvironment
 from Simulator import WIDTH, HEIGHT
@@ -18,6 +18,7 @@ import sys
 import traceback
 import subprocess
 
+import cv2
 import tensorflow as tf
 import time
 import numpy as np
@@ -58,7 +59,7 @@ EXECUTABLE = "CarlaUE4.exe" if platform.system() == "Windows" else "CarlaUE4.sh"
 MEMORY_FRACTION = 0.4
 MIN_REWARD = 4
 
-EPISODES = 100
+episode = 0
 
 epsilon = 1
 EPSILON_DECAY = 0.985
@@ -119,7 +120,8 @@ def start_carla():
         except RuntimeError as e:
             time.sleep(0.1)
 
-def learn_loop(sim_world):
+def learn_loop(sim_world, tensorboard, replay_memory):
+    global episode
     global epsilon
     global load_model_name
 
@@ -135,7 +137,7 @@ def learn_loop(sim_world):
         # create car environment in the simulator and our Reinforcement Learning agent
         checkpoint_manager = CheckpointManager()
         car_environment = CarEnvironment(sim_world, checkpoint_manager)
-        agent = DQNAgent(load_model_name)
+        agent = DQNAgent(load_model_name, tensorboard, replay_memory)
 
         # Start training thread and wait for training to be initialized
         trainer_thread = Thread(target=agent.train_in_loop, daemon=True)
@@ -147,7 +149,6 @@ def learn_loop(sim_world):
             start_state = np.ones((1, HEIGHT, WIDTH, 1)) * 255, 1, 1, 1
             agent.get_qs(start_state)
 
-        episode = 0
         while True:
             print("Active Threads", threading.active_count())
             episode += 1
@@ -290,12 +291,14 @@ def main():
     if not os.path.isdir('models'):
         os.makedirs('models')
 
+    tensorboard = ModifiedTensorBoard(log_dir=f"logs/{MODEL_NAME}-{int(time.time())}")
+    replay_memory = deque(maxlen=REPLAY_MEMORY_SIZE)
     # start the learning process
     try:
         while True:
             try:
                 sim_world = start_carla()
-                learn_loop(sim_world)
+                learn_loop(sim_world, tensorboard, replay_memory)
             except RuntimeError as e:
                 print("runtime error", e)
                 print(traceback.format_exc())
