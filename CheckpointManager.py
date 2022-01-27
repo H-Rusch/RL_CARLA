@@ -31,47 +31,6 @@ import carla
 class CheckpointManager:
     """
     Class maintaining the list of checkpoints the car has to go through. The next checkpoint the car should drive to is
-    active. When a car goes through a checkpoint the next one will be selected as active.
-    """
-
-    def __init__(self):
-        self.checkpoints = []
-        self.current = 0
-
-
-import os
-
-import glob
-import sys
-
-# ==============================================================================
-# -- Find CARLA module ---------------------------------------------------------
-# ==============================================================================
-try:
-    sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
-        sys.version_info.major,
-        sys.version_info.minor,
-        'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
-except IndexError:
-    pass
-
-# ==============================================================================
-# -- Add PythonAPI for release mode --------------------------------------------
-# ==============================================================================
-try:
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + '/carla')
-except IndexError:
-    pass
-
-import carla
-
-
-# ==============================================================================
-# -- Checkpoint Manager  -------------------------------------------------------
-# ==============================================================================
-class CheckpointManager:
-    """
-    Class maintaining the list of checkpoints the car has to go through. The next checkpoint the car should drive to is
     active.
     """
     def __init__(self):
