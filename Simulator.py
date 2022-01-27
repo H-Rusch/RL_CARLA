@@ -214,21 +214,18 @@ class CarEnvironment(object):
 
         # calculate the angle between the car and the checkpoint by computing the atan2 and
         # normalizing the angle to a value in [0, 360)
-        # 1 is one degree to the right, 359 is one degree to the left
+        # 180 is going straight, 179 means the checkpoint is one degree to the right and 180 means the checkpoint is
+        # one degree to the left
         c_x, c_y = checkpoint_location.x, checkpoint_location.y
         v_x, v_y = vehicle_transform.location.x, vehicle_transform.location.y
 
-        raw_angle = math.atan2(c_y - v_y, c_x - v_x)
+        dx = v_x - c_x
+        dy = v_y - c_y
+
+        raw_angle = math.atan2(dy, dx)
         raw_angle = math.degrees(raw_angle)
 
         direction = int((raw_angle - vehicle_transform.rotation.yaw) % DEGREE_DIVISOR)
-
-        # set 180 as the value for going straight
-        # 179 is one degree to the left, 181 is one degree to the right
-        if direction > 180:
-            direction -= 180
-        elif direction < 180:
-            direction += 180
 
         return distance, direction
 
