@@ -56,6 +56,8 @@ EXECUTABLE = "CarlaUE4.exe" if platform.system() == "Windows" else "CarlaUE4.sh"
 
 load_model_name = "models/CNN____90.41max___56.48avg___34.62min__1642868073.model"
 
+REVERSE = False
+
 
 # ==============================================================================
 # -- Game Loop ---------------------------------------------------------
@@ -121,6 +123,12 @@ def run_loop(sim_world, tensorboard, replay_memory):
         checkpoint_manager = CheckpointManager()
         car_environment = CarEnvironment(sim_world, checkpoint_manager)
         agent = DQNAgent(load_model_name, tensorboard, replay_memory)
+
+        if REVERSE:
+            checkpoint_manager.checkpoints = checkpoint_manager.checkpoints[::-1]
+            checkpoint_manager.checkpoints.append(checkpoint_manager.checkpoints.pop(0))
+            x, y, z = (79.19, 302.39, 2.0)
+            car_environment.vehicle.spawn_point = carla.Transform(carla.Location(x=x, y=y, z=z), carla.Rotation(yaw=0))
 
         while True:
             standing = True
