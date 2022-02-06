@@ -130,6 +130,12 @@ def kill_processes():
 
 
 def learn_loop(sim_world, tensorboard, replay_memory):
+    """
+    Start the learning process by creating all needed components and then continuously executing episodes.
+    A given model will be loaded if the 'load_model_name' is specified. An agent is created with the model and a thread
+    is started, which constantly executes the agents training. The main thread continues to executes episodes.
+    When an error occurs, the current model is saved, so it can be loaded again.
+    """
     global load_model_name
 
     car_environment = None
@@ -179,6 +185,7 @@ def learn_loop(sim_world, tensorboard, replay_memory):
 
 
 def execute_episode(agent: DQNAgent, car_environment: CarEnvironment, actions: deque, episode_rewards: list):
+    """ Execute a full episode and do all administrative tasks regarding this episode. """
     global episode, epsilon
 
     episode += 1
