@@ -4,6 +4,8 @@
 The program was written with Python 3.7 using the 9.11 version of the CARLA Simulator. All needed modules can be installed running the `run.py` script.
 
 ## Running the program
+The program expects to be nested in the `PythonAPI` folder in the CARLA folder. 
+
 ### Training a model
 Run `run.py` to install all needed modules and start the training process. The attribute `load_model_name` in `main.py` can be edited to load an existing model. The value of `None` will create new model. 
 
