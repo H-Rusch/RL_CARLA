@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-img = cv2.imread("img/bild.png")
+img = cv2.imread("img/intersection.png")
 height, width, channels = img.shape
 img_output = np.zeros((height, width, 3), np.uint8)
 
@@ -22,27 +22,6 @@ masked_image = cv2.bitwise_or(masked_marking, masked_street)
 masked_image = cv2.merge((masked_image, masked_image, masked_image))
 
 concat_image = cv2.hconcat([img, masked_image])
-cv2.imshow("", concat_image)
-cv2.waitKey(0)
-print(masked_image)
-exit(232323)
-
-# find the contour with the largest area which is the street
-contours, _ = cv2.findContours(masked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-street, largest_area = None, 0
-for contour in contours:
-    area = cv2.contourArea(contour)
-    if area > largest_area:
-        largest_area = area
-        street = contour
-
-cv2.drawContours(img_output, street, -1, (255, 255, 255), 1)
-
-concat_image = cv2.hconcat([img, img_output])
-# concat_image = cv2.vconcat([concat_image, concat_image])
-
-img_output = cv2.cvtColor(img_output, cv2.COLOR_BGR2GRAY)
 
 cv2.imshow("", concat_image)
 cv2.waitKey(0)
