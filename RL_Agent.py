@@ -25,7 +25,6 @@ DISTANCE_DIVISOR = 500
 DISCOUNT = 0.99
 
 
-
 # ==============================================================================
 # -- DQNAgent ------------------------------------------------------------------
 # ==============================================================================
@@ -51,7 +50,6 @@ class DQNAgent:
         velocity of the car as an input.
         The output layer has 9 neurons in total. One for each action the vehicle can take.
         """
-        print("load ", model_name)
 
         if model_name is None:
             # network for image processing
@@ -114,8 +112,6 @@ class DQNAgent:
                                (states[i][3] - TARGET_SPEED) / TARGET_SPEED])
         input_adds = np.asarray(input_adds)
 
-        # cv2.imshow("", input_images[0])
-        # cv2.waitKey(10)
         current_qs_list = self.model.predict({"img_input": input_images, "add_input": input_adds},
                                              PREDICTION_BATCH_SIZE)
 
@@ -131,8 +127,6 @@ class DQNAgent:
                  (new_states[i][3] - TARGET_SPEED) / TARGET_SPEED])
         input_adds_new = np.asarray(input_adds_new)
 
-        # cv2.imshow("", input_images_new[0])
-        # cv2.waitKey(10)
         future_qs_list = self.target_model.predict({"img_input": input_images_new, "add_input": input_adds_new},
                                                    PREDICTION_BATCH_SIZE)
 
@@ -164,9 +158,6 @@ class DQNAgent:
             log_this_step = True
             self.last_logged_episode = self.tensorboard.step
 
-        # cv2.imshow("", x_img[0])
-        # cv2.waitKey(10)
-
         self.model.fit({"img_input": x_img, "add_input": x_add}, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0,
                        shuffle=False,
                        callbacks=[self.tensorboard] if log_this_step else None)
@@ -186,8 +177,6 @@ class DQNAgent:
             dtype=np.float32)
         add_in = add_in.reshape(1, -1)
 
-        # cv2.imshow("", img_in.reshape(480, 640))
-        # cv2.waitKey(10)
         qs = self.model.predict(
             x={"img_input": img_in, "add_input": add_in}
         )
