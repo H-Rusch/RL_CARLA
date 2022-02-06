@@ -2,15 +2,6 @@ from __future__ import print_function
 import os
 import platform
 
-from collections import deque
-from ModifiedTensorboard import ModifiedTensorBoard
-from RL_Agent import DQNAgent, MODEL_NAME, REPLAY_MEMORY_SIZE
-from CheckpointManager import CheckpointManager
-from Simulator import CarEnvironment
-from Simulator import WIDTH, HEIGHT
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
 import glob
 import logging
 import psutil
@@ -45,6 +36,15 @@ except IndexError:
     pass
 
 import carla
+
+from collections import deque
+from ModifiedTensorboard import ModifiedTensorBoard
+from RL_Agent import DQNAgent, MODEL_NAME, REPLAY_MEMORY_SIZE
+from CheckpointManager import CheckpointManager
+from Simulator import CarEnvironment
+from Simulator import WIDTH, HEIGHT
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # ==============================================================================
 # -- Defining Constants --------------------------------------------------------
