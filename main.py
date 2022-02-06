@@ -18,7 +18,6 @@ import sys
 import traceback
 import subprocess
 
-import cv2
 import tensorflow as tf
 import time
 import numpy as np
@@ -85,7 +84,7 @@ def start_carla() -> carla.World:
     :return: the world object in the CARLA simulator
     """
     while True:
-        log_info(time.strftime("%H %M") + ": Carla Start\n")
+        log_info("Carla Start")
         kill_processes()
         subprocess.Popen(f"../../{EXECUTABLE} -quality-level=Low -ResX=300 -ResY=200")
         time.sleep(6)
@@ -113,7 +112,7 @@ def kill_processes():
         if process.name().lower().startswith(EXECUTABLE.split('.')[0].lower()):
             try:
                 process.terminate()
-            except:
+            except Exception:
                 pass
     still_alive = []
     for process in psutil.process_iter():
@@ -125,29 +124,28 @@ def kill_processes():
         for process in still_alive:
             try:
                 process.kill()
-            except:
+            except Exception:
                 pass
         psutil.wait_procs(still_alive)
 
 
 def learn_loop(sim_world, tensorboard, replay_memory):
-    global episode
-    global epsilon
     global load_model_name
 
     car_environment = None
     agent = None
     trainer_thread = None
 
-    ep_rewards = [-200]
+    episode_rewards = [-20]
+    actions = deque([1], maxlen=200)
 
     try:
-        # create car environment in the simulator and our Reinforcement Learning agent
+        # create car environment in the simulator and the Reinforcement Learning agent
         checkpoint_manager = CheckpointManager()
         car_environment = CarEnvironment(sim_world, checkpoint_manager)
         agent = DQNAgent(load_model_name, tensorboard, replay_memory)
 
-        # Start training thread and wait for training to be initialized
+        # start training thread and wait for training to be initialized
         trainer_thread = Thread(target=agent.train_in_loop, daemon=True)
         trainer_thread.start()
         while not agent.training_initialized:
@@ -157,48 +155,17 @@ def learn_loop(sim_world, tensorboard, replay_memory):
             start_state = np.ones((1, HEIGHT, WIDTH, 1)) * 255, 1, 1, 1
             agent.get_qs(start_state)
 
+        # execute episodes until the program is stopped
         while True:
-            episode += 1
-            # Update tensorboard step every episode
-            agent.tensorboard.step = episode
+            execute_episode(agent, car_environment, actions, episode_rewards)
 
-            # drive until the time runs out
-            actions, episode_reward = execute_episode(agent, car_environment)
+    except (RuntimeError, KeyboardInterrupt):
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards)
 
-            # append episode reward to a list and log stats every given number of episodes
-            ep_rewards.append(episode_reward)
-            if episode % AGGREGATE_STATS_EVERY == 0 or episode == 1:
-                average_reward = np.mean(ep_rewards[-AGGREGATE_STATS_EVERY:])
-                min_reward = min(ep_rewards[-AGGREGATE_STATS_EVERY:])
-                max_reward = max(ep_rewards[-AGGREGATE_STATS_EVERY:])
-                agent.tensorboard.update_stats(reward_avg=average_reward, reward_min=min_reward, reward_max=max_reward,
-                                               epsilon=epsilon)
-
-            # decay epsilon each iteration
-            if epsilon > MIN_EPSILON:
-                epsilon *= EPSILON_DECAY
-                epsilon = max(MIN_EPSILON, epsilon)
-            avg_a = sum(actions) / len(actions)
-            # reset epsilon
-            if epsilon < MIN_EPSILON_2 and not any(abs(ac - avg_a) > 1 for ac in actions):
-                epsilon = 0.5
-
-            print(str(episode_reward) + " :Reward|Epsilon: " + str(epsilon))
-
-            if episode % SAVE_MODEL_EVERY == 0:
-                average_reward = np.mean(ep_rewards[-SAVE_MODEL_EVERY:])
-                min_reward = min(ep_rewards[-SAVE_MODEL_EVERY:])
-                max_reward = max(ep_rewards[-SAVE_MODEL_EVERY:])
-
-                save_model(
-                    f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
-                    agent)
-                log_info(time.strftime("%H %M") + ": Save episodes\n")
-
-            if threading.active_count() < 2:
-                raise RuntimeError()
-
-        # Set termination flag for training thread and wait for it to finish
+        save_model(
+            f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{avg_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
+            agent)
+        log_info("Save except")
 
     finally:
         # Set termination flag for training thread and wait for it to finish
@@ -207,16 +174,51 @@ def learn_loop(sim_world, tensorboard, replay_memory):
             if trainer_thread is not None:
                 trainer_thread.join()
 
-            save_model(
-                f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{average_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
-                agent)
-            log_info(time.strftime("%H %M") + ": Save finally\n")
-
         if car_environment is not None:
             car_environment.destroy()
 
 
-def execute_episode(agent: DQNAgent, car_environment: CarEnvironment) -> tuple:
+def execute_episode(agent: DQNAgent, car_environment: CarEnvironment, actions: deque, episode_rewards: list):
+    global episode, epsilon
+
+    episode += 1
+    agent.tensorboard.step = episode
+
+    # driving actions this episode
+    episode_actions, episode_reward = execute_episode_actions(agent, car_environment)
+    actions.extend(episode_actions)
+
+    # append episode reward to a list and log stats every given number of episodes
+    episode_rewards.append(episode_reward)
+    if episode % AGGREGATE_STATS_EVERY == 0 or episode == 1:
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards)
+        agent.tensorboard.update_stats(reward_avg=avg_reward, reward_min=min_reward, reward_max=max_reward,
+                                       epsilon=epsilon)
+
+    # decay epsilon each iteration
+    if epsilon > MIN_EPSILON:
+        epsilon *= EPSILON_DECAY
+        epsilon = max(MIN_EPSILON, epsilon)
+
+    # reset epsilon
+    if epsilon < MIN_EPSILON_2 and len(list(set(actions))) == 1:
+        epsilon = 0.5
+
+    print(f"{episode_reward} :Reward | Epsilon: {epsilon}")
+
+    if episode % SAVE_MODEL_EVERY == 0:
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards)
+
+        save_model(
+            f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{avg_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
+            agent)
+        log_info("Save episodes")
+
+    if threading.active_count() < 2:
+        raise RuntimeError("A Thread stopped running")
+
+
+def execute_episode_actions(agent: DQNAgent, car_environment: CarEnvironment) -> tuple:
     """
     Execute a full episode.
     First reset the world in the simulator and reset the episode time.
@@ -232,7 +234,7 @@ def execute_episode(agent: DQNAgent, car_environment: CarEnvironment) -> tuple:
     # reset environment and get initial state
     current_state = car_environment.restart()
 
-    actions = [1]
+    episode_actions = deque(maxlen=200)
     episode_reward = 0
     standing = True
 
@@ -250,9 +252,7 @@ def execute_episode(agent: DQNAgent, car_environment: CarEnvironment) -> tuple:
         elif np.random.random() > epsilon:
             qs = agent.get_qs(current_state)
             action = np.argmax(qs)
-            if len(actions) > 200:
-                actions.pop(0)
-            actions.append(action)
+            episode_actions.append(action)
         else:
             action = np.random.randint(0, 9)
             time.sleep(12 / FPS)
@@ -267,25 +267,33 @@ def execute_episode(agent: DQNAgent, car_environment: CarEnvironment) -> tuple:
         current_state = new_state
 
         if done:
-            print(actions)
             break
 
     # clean up the simulator by destroying the car and the sensors
     car_environment.destroy()
 
-    return actions, episode_reward
+    return episode_actions, episode_reward
 
 
 def save_model(model_name, agent):
-    print("save ", model_name)
     global load_model_name
+
+    print("save ", model_name)
     agent.model.save(model_name)
     load_model_name = model_name
 
 
-def log_info(info: str):
+def log_info(message: str):
     with open("log.txt", "a") as file:
-        file.write(info)
+        file.write(time.strftime("%H %M") + message + "\n")
+
+
+def calculate_rewards(episode_rewards) -> tuple:
+    avg_reward = np.mean(episode_rewards[-AGGREGATE_STATS_EVERY:])
+    min_reward = min(episode_rewards[-AGGREGATE_STATS_EVERY:])
+    max_reward = max(episode_rewards[-AGGREGATE_STATS_EVERY:])
+
+    return avg_reward, min_reward, max_reward
 
 
 # ==============================================================================
@@ -307,6 +315,7 @@ def main():
 
     tensorboard = ModifiedTensorBoard(log_dir=f"logs/{MODEL_NAME}-{int(time.time())}")
     replay_memory = deque(maxlen=REPLAY_MEMORY_SIZE)
+
     # start the learning process
     try:
         while True:
@@ -321,7 +330,7 @@ def main():
                 print("main exception", e)
                 print(traceback.format_exc())
                 time.sleep(0.1)
-    except KeyboardInterrupt as e:
+    except KeyboardInterrupt:
         print('\nCancelled by user.')
 
 
