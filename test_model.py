@@ -1,3 +1,11 @@
+""" Script to test the model
+
+While testing the model, the agent will not learn new things and only use the learned knowledge without a random factor.
+On collision the car will also not be reset, but it can be reset manually.
+A model has to be specified in the 'load_model_name' field. Changing the 'REVERSE' field to True will spawn the car
+backwards and reverse the checkpoint order.
+"""
+
 from __future__ import print_function
 import os
 import platform
@@ -22,7 +30,6 @@ from pygame.locals import K_SPACE
 import time
 import numpy as np
 
-
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
 # ==============================================================================
@@ -44,7 +51,6 @@ except IndexError:
 
 import carla
 
-
 # ==============================================================================
 # -- Defining Constants --------------------------------------------------------
 # ==============================================================================
@@ -54,8 +60,10 @@ HOST = "127.0.0.1"
 
 EXECUTABLE = "CarlaUE4.exe" if platform.system() == "Windows" else "CarlaUE4.sh"
 
-load_model_name = "models/CNN____90.41max___56.48avg___34.62min__1642868073.model"
+# load this model
+load_model_name = None
 
+# make the car drive the track backwards
 REVERSE = False
 
 
@@ -105,11 +113,8 @@ def start_carla():
 
                 client.get_world().unload_map_layer(carla.MapLayer.Props)
                 time.sleep(1)
-
-                client.get_world().unload_map_layer(carla.MapLayer.StreetLights)
-                time.sleep(1)
             return client.get_world()
-        except RuntimeError as e:
+        except RuntimeError:
             time.sleep(0.1)
 
 
