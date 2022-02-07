@@ -1,22 +1,21 @@
 import glob
-import os
-import sys
-import random
-import time
-import numpy as np
-import cv2
 import math
+import os
+import random
+import sys
+import time
 from collections import deque
-from keras.applications.xception import Xception
-from keras.layers import Dense, GlobalAveragePooling2D
-from keras.optimizer_v2.adam import Adam
-from keras.models import Model
-from keras.callbacks import TensorBoard
-
-import tensorflow as tf
-#import keras.backend.tensorflow_backend as backend
+# import keras.backend.tensorflow_backend as backend
 from threading import Thread
 
+import cv2
+import numpy as np
+import tensorflow as tf
+from keras.applications.xception import Xception
+from keras.callbacks import TensorBoard
+from keras.layers import Dense, GlobalAveragePooling2D
+from keras.models import Model
+from keras.optimizer_v2.adam import Adam
 from tqdm import tqdm
 
 try:

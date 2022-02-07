@@ -7,16 +7,10 @@ backwards and reverse the checkpoint order.
 """
 
 from __future__ import print_function
+
 import os
 import platform
-
 from collections import deque
-from ModifiedTensorboard import ModifiedTensorBoard
-from RL_Agent import DQNAgent, MODEL_NAME, REPLAY_MEMORY_SIZE
-from CheckpointManager import CheckpointManager
-from Simulator import CarEnvironment
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import glob
 import logging
@@ -29,6 +23,11 @@ from pygame.locals import K_SPACE
 
 import time
 import numpy as np
+
+from CheckpointManager import CheckpointManager
+from ModifiedTensorboard import ModifiedTensorBoard
+from RL_Agent import DQNAgent, MODEL_NAME, REPLAY_MEMORY_SIZE
+from Simulator import CarEnvironment
 
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
@@ -50,6 +49,8 @@ except IndexError:
     pass
 
 import carla
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # ==============================================================================
 # -- Defining Constants --------------------------------------------------------

@@ -1,13 +1,12 @@
-from Simulator import DEGREE_DIVISOR, WIDTH, HEIGHT, TARGET_SPEED
-
-from keras.layers import Dense, Conv2D, AveragePooling2D, Flatten, Input, Concatenate, LeakyReLU
-from keras.models import Model
-
-import tensorflow as tf
 import random
 import time
+
 import numpy as np
-import cv2
+import tensorflow as tf
+from keras.layers import Dense, Conv2D, AveragePooling2D, Flatten, Input, Concatenate
+from keras.models import Model
+
+from Simulator import DEGREE_DIVISOR, WIDTH, HEIGHT, TARGET_SPEED
 
 # ==============================================================================
 # -- Defining Constants --------------------------------------------------------

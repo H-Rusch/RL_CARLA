@@ -1,20 +1,19 @@
 from __future__ import print_function
-import os
-import platform
 
 import glob
 import logging
-import psutil
-import sys
-import traceback
+import os
+import platform
 import subprocess
-
-import tensorflow as tf
-import time
-import numpy as np
-
+import sys
 import threading
+import time
+import traceback
 from threading import Thread
+
+import numpy as np
+import psutil
+import tensorflow as tf
 
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------

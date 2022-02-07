@@ -1,8 +1,7 @@
 import os
 
-from keras.callbacks import TensorBoard
-
 import tensorflow as tf
+from keras.callbacks import TensorBoard
 
 
 # ==============================================================================

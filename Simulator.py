@@ -1,10 +1,9 @@
-import os
 import glob
-import sys
-
-import time
 import math
+import os
 import random
+import sys
+import time
 
 import cv2
 import numpy as np
@@ -31,7 +30,7 @@ except IndexError:
     pass
 
 import carla
-from carla import ColorConverter as cc, Transform, Location, Rotation
+from carla import ColorConverter as cc
 
 # ==============================================================================
 # -- Defining Constants --------------------------------------------------------
