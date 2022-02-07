@@ -90,49 +90,40 @@ class DQNAgent:
         self.replay_memory.append(transition)
 
     def train(self):
-        # print(len(self.replay_memory))
+        """
+        The images and additional information are extracted from a list of states randomly selected from the replay
+        memory. With these inputs a prediction is made. Afterwards the same thing is done for the new states which
+        follow the original states after the selected action was taken.
+        The maximum future q values are calculated for each state and based on that the Neural Networks are updated.
+        """
         if len(self.replay_memory) < MIN_REPLAY_MEMORY_SIZE:
             return
-
+        # a list of states randomly selected from the replay memory
         minibatch = random.sample(self.replay_memory, MINIBATCH_SIZE)
-
-        # a list of states
         states = [transition[0] for transition in minibatch]
 
-        # extract images from states
         input_images = np.asarray(
             [np.asarray(np.asarray(state_part[0]) / 255).reshape(480, 640) for state_part in states])
 
-        # extract additional information (Distance to checkpoint, Degree to Checkpoint, Speed) from states
-        # those values are converted into values between 0 and 1
-        input_adds = []
-        for i in range(len(states)):
-            input_adds.append([states[i][1] / DEGREE_DIVISOR, states[i][2] / DISTANCE_DIVISOR,
-                               (states[i][3] - TARGET_SPEED) / TARGET_SPEED])
-        input_adds = np.asarray(input_adds)
+        input_adds = np.asarray([[state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR,
+                                  (state[3] - TARGET_SPEED) / TARGET_SPEED] for state in states])
 
         current_qs_list = self.model.predict({"img_input": input_images, "add_input": input_adds},
                                              PREDICTION_BATCH_SIZE)
 
-        # new
+        # new states following the original list of states
         new_states = [transition[3] for transition in minibatch]
         input_images_new = np.asarray(
             [np.asarray(np.asarray(state_part[0]) / 255).reshape(480, 640) for state_part in new_states])
 
-        input_adds_new = []
-        for i in range(len(new_states)):
-            input_adds_new.append(
-                [new_states[i][1] / DEGREE_DIVISOR, new_states[i][2] / DISTANCE_DIVISOR,
-                 (new_states[i][3] - TARGET_SPEED) / TARGET_SPEED])
-        input_adds_new = np.asarray(input_adds_new)
+        input_adds_new = np.asarray([[state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR,
+                                      (state[3] - TARGET_SPEED) / TARGET_SPEED] for state in new_states])
 
         future_qs_list = self.target_model.predict({"img_input": input_images_new, "add_input": input_adds_new},
                                                    PREDICTION_BATCH_SIZE)
 
-        x_img = []
-        x_add = []
+        # calculate maximum future q values for states
         y = []
-
         for index, (current_state, action, reward, new_state, done) in enumerate(minibatch):
             if not done:
                 max_future_q = np.max(future_qs_list[index])
@@ -143,13 +134,7 @@ class DQNAgent:
             current_qs = current_qs_list[index]
             current_qs[action] = new_q
 
-            x_img.append((np.array(current_state[0]) / 255).reshape(480, 640))
-            x_add.append([(current_state[1] / DEGREE_DIVISOR), (current_state[2] / DISTANCE_DIVISOR),
-                          ((current_state[3] - TARGET_SPEED) / TARGET_SPEED)])
             y.append(current_qs)
-
-        x_img = np.asarray(x_img)
-        x_add = np.asarray(x_add)
         y = np.asarray(y)
 
         log_this_step = False
@@ -157,19 +142,24 @@ class DQNAgent:
             log_this_step = True
             self.last_logged_episode = self.tensorboard.step
 
-        self.model.fit({"img_input": x_img, "add_input": x_add}, np.array(y), batch_size=TRAINING_BATCH_SIZE, verbose=0,
-                       shuffle=False,
+        # update the weights in the Neural Network
+        self.model.fit({"img_input": input_images, "add_input": input_adds}, np.array(y),
+                       batch_size=TRAINING_BATCH_SIZE, verbose=0, shuffle=False,
                        callbacks=[self.tensorboard] if log_this_step else None)
 
         if log_this_step:
             self.target_update_counter += 1
 
+        # update target model
         if self.target_update_counter > UPDATE_TARGET_EVERY:
-            print("Update!!!!!!!!!!!!!!!!")
             self.target_model.set_weights(self.model.get_weights())
             self.target_update_counter = 0
 
     def get_qs(self, state):
+        """
+        Predict the Q-values for the current state given as an input. The state will be normalized in oder to get values
+        between 0 and 1 as inputs for the Neural Network.
+        """
         img_in = np.asarray(state[0]) / 255
         add_in = np.asarray(
             [state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR, (state[3] - TARGET_SPEED) / TARGET_SPEED],
