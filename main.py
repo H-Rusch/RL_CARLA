@@ -165,7 +165,7 @@ def learn_loop(sim_world, tensorboard, replay_memory):
             execute_episode(agent, car_environment, actions, episode_rewards)
 
     except (RuntimeError, KeyboardInterrupt):
-        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards)
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards, False)
 
         save_model(
             f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{avg_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
@@ -197,7 +197,7 @@ def execute_episode(agent: DQNAgent, car_environment: CarEnvironment, actions: d
     # append episode reward to a list and log stats every given number of episodes
     episode_rewards.append(episode_reward)
     if episode % AGGREGATE_STATS_EVERY == 0 or episode == 1:
-        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards)
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards, False)
         agent.tensorboard.update_stats(reward_avg=avg_reward, reward_min=min_reward, reward_max=max_reward,
                                        epsilon=epsilon)
 
@@ -213,7 +213,7 @@ def execute_episode(agent: DQNAgent, car_environment: CarEnvironment, actions: d
     print(f"{episode_reward} :Reward | Epsilon: {epsilon}")
 
     if episode % SAVE_MODEL_EVERY == 0:
-        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards)
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards, True)
 
         save_model(
             f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{avg_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
@@ -294,10 +294,12 @@ def log_info(message: str):
         file.write(time.strftime("%H %M") + message + "\n")
 
 
-def calculate_rewards(episode_rewards) -> tuple:
-    avg_reward = np.mean(episode_rewards[-AGGREGATE_STATS_EVERY:])
-    min_reward = min(episode_rewards[-AGGREGATE_STATS_EVERY:])
-    max_reward = max(episode_rewards[-AGGREGATE_STATS_EVERY:])
+def calculate_rewards(episode_rewards, save: bool) -> tuple:
+    number_of_elements = SAVE_MODEL_EVERY if save else AGGREGATE_STATS_EVERY
+
+    avg_reward = np.mean(episode_rewards[-number_of_elements:])
+    min_reward = min(episode_rewards[-number_of_elements:])
+    max_reward = max(episode_rewards[-number_of_elements:])
 
     return avg_reward, min_reward, max_reward
 
