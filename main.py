@@ -2,29 +2,18 @@ from __future__ import print_function
 
 import glob
 import logging
-import math
 import os
-import numpy.random as random
+import platform
+import subprocess
 import sys
-import weakref
+import threading
+import time
+import traceback
+from threading import Thread
 
-try:
-    import pygame
-    from pygame.locals import KMOD_CTRL
-    from pygame.locals import K_ESCAPE
-    from pygame.locals import K_q
-except ImportError:
-    raise RuntimeError('cannot import pygame, make sure pygame package is installed')
-
-try:
-    import numpy as np
-except ImportError:
-    raise RuntimeError('cannot import numpy, make sure numpy package is installed')
-
-try:
-    import cv2
-except ImportError:
-    raise RuntimeError('cannot import opencv, make sure opencv-python package is installed')
+import numpy as np
+import psutil
+import tensorflow as tf
 
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
@@ -46,425 +35,273 @@ except IndexError:
     pass
 
 import carla
-from carla import ColorConverter as cc, Transform, Location, Rotation
+
+from collections import deque
+from ModifiedTensorboard import ModifiedTensorBoard
+from RL_Agent import DQNAgent, MODEL_NAME, REPLAY_MEMORY_SIZE
+from CheckpointManager import CheckpointManager
+from Simulator import CarEnvironment
+from Simulator import WIDTH, HEIGHT
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # ==============================================================================
 # -- Defining Constants --------------------------------------------------------
 # ==============================================================================
 
-PORT = "127.0.0.1"
-HOST = 2000
+PORT = 2000
+HOST = "127.0.0.1"
 
-WIDTH = 640
-HEIGHT = 480
+EXECUTABLE = "CarlaUE4.exe" if platform.system() == "Windows" else "CarlaUE4.sh"
+
+MEMORY_FRACTION = 0.4
+MIN_REWARD = 4
+
+episode = 0
+
+epsilon = 1
+EPSILON_DECAY = 0.985
+MIN_EPSILON = 0.001
+MIN_EPSILON_2 = 0.1
+
+AGGREGATE_STATS_EVERY = 10
+SAVE_MODEL_EVERY = 1000
+
+# model to which should be loaded. None to create a new model
+load_model_name = None
+
+FPS = 60
 
 
 # ==============================================================================
-# -- World ---------------------------------------------------------------
+# -- Learning Algorithm  -------------------------------------------------------
 # ==============================================================================
 
-class World(object):
-    """ Class representing the surrounding environment """
-
-    def __init__(self, carla_world):
-        """Constructor method"""
-        self.world = carla_world
+def start_carla() -> carla.World:
+    """
+    Start the CARLA simulator. Loads the correct map and unloads map layers which might cause problems.
+    :return: the world object in the CARLA simulator
+    """
+    while True:
+        log_info("Carla Start")
+        kill_processes()
+        subprocess.Popen(f"../../{EXECUTABLE} -quality-level=Low -ResX=300 -ResY=200")
+        time.sleep(6)
         try:
-            self.map = self.world.get_map()
-        except RuntimeError as error:
-            print('RuntimeError: {}'.format(error))
-            print('  The server could not send the OpenDRIVE (.xodr) file:')
-            print('  Make sure it exists, has the same name of your town, and is correct.')
-            sys.exit(1)
+            client = carla.Client(HOST, PORT)
+            client.set_timeout(5.0)
+            map_name = client.get_world().get_map().name
+            if map_name != "Town02_Opt":
+                client.load_world("Town02_Opt")
+                time.sleep(1)
 
-        self.agent = CustomAgent(self)
-        self.collision_sensor = None
-        self.gnss_sensor = None
-        self.camera_manager = None
+                client.get_world().unload_map_layer(carla.MapLayer.Foliage)
+                time.sleep(1)
 
-        self.restart()
-
-    def restart(self):
-        """Restart the world"""
-        # clean up old objects
-        self.destroy()
-
-        # spawn the actor
-        self.agent.spawn_actor()
-
-        self.world.wait_for_tick()
-
-        # Set up the sensors.
-        self.collision_sensor = CollisionSensor(self.agent.actor)
-        self.gnss_sensor = GnssSensor(self.agent.actor)
-        self.camera_manager = CameraManager(self.agent.actor, debug=True)
-
-        self.camera_manager.spawn_cameras()
-
-    def render(self, display):
-        """Render world"""
-        self.camera_manager.render(display)
-
-    def destroy(self):
-        """Destroys all actors"""
-        actors = [
-            self.camera_manager,
-            self.gnss_sensor,
-            self.collision_sensor,
-            self.agent]
-        for actor in actors:
-            if actor is not None:
-                actor.destroy()
+                client.get_world().unload_map_layer(carla.MapLayer.Props)
+                time.sleep(1)
+            return client.get_world()
+        except RuntimeError:
+            time.sleep(0.1)
 
 
-# ==============================================================================
-# -- AI-Agent ------------------------------------------------------------------
-# ==============================================================================
+def kill_processes():
+    """ Stop running CARLA processes in order to start a new one. """
+    for process in psutil.process_iter():
+        if process.name().lower().startswith(EXECUTABLE.split('.')[0].lower()):
+            try:
+                process.terminate()
+            except Exception:
+                pass
+    still_alive = []
+    for process in psutil.process_iter():
+        if process.name().lower().startswith(EXECUTABLE.split('.')[0].lower()):
+            still_alive.append(process)
 
-class CustomAgent:
-    def __init__(self, world: World):
-        # the car actually driving around in the simulation
-        self.actor = None
-        self.world = world
-
-        # the model of the car driving around
-        self.blueprint = random.choice(self.world.world.get_blueprint_library().filter("model3"))
-        self.blueprint.set_attribute('role_name', 'hero')
-
-        # spawn point of the car
-        spawn_points = self.world.map.get_spawn_points()
-        if spawn_points is None:
-            print('There are no spawn points available in your map/town.')
-            print('Please add some Vehicle Spawn Point to your UE4 scene.')
-            sys.exit(1)
-        self.spawn_point = random.choice(spawn_points)
-
-    def spawn_actor(self):
-        self.actor = self.world.world.try_spawn_actor(self.blueprint, self.spawn_point)
-
-        self.modify_vehicle_physics()
-        # self.actor.set_autopilot(True)
-
-        self.actor.apply_control(carla.VehicleControl(throttle=1.0, steer=0.0))
-
-    def modify_vehicle_physics(self):
-        try:
-            physics_control = self.actor.get_physics_control()
-            physics_control.use_gear_autobox(True)
-            # physics_control.use_sweep_wheel_collision = True
-
-            self.actor.apply_physics_control(physics_control)
-        except Exception:
-            pass
-
-    def destroy(self):
-        if self.actor is not None:
-            self.actor.destroy()
+    # kill process and wait until it's being killed
+    if len(still_alive):
+        for process in still_alive:
+            try:
+                process.kill()
+            except Exception:
+                pass
+        psutil.wait_procs(still_alive)
 
 
-# ==============================================================================
-# -- CollisionSensor -----------------------------------------------------------
-# ==============================================================================
-
-class CollisionSensor(object):
-    """ Class for collision sensors"""
-
-    def __init__(self, parent_actor):
-        """Constructor method"""
-        self.sensor = None
-        self.history = []
-        self._parent = parent_actor
-
-        world = self._parent.get_world()
-        blueprint = world.get_blueprint_library().find('sensor.other.collision')
-        self.sensor = world.spawn_actor(blueprint, carla.Transform())
-        # We need to pass the lambda a weak reference to
-        # self to avoid circular reference.
-        weak_self = weakref.ref(self)
-        self.sensor.listen(lambda event: CollisionSensor._on_collision(weak_self, event))
-
-    def destroy(self):
-        if self.sensor is not None:
-            self.sensor.destroy()
-
-    @staticmethod
-    def _on_collision(weak_self, event):
-        """On collision method"""
-        self = weak_self()
-        if not self:
-            return
-        impulse = event.normal_impulse
-        intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
-        self.history.append((event.frame, intensity))
-        if len(self.history) > 4000:
-            self.history.pop(0)
-
-
-# ==============================================================================
-# -- GnssSensor --------------------------------------------------------
-# ==============================================================================
-
-class GnssSensor(object):
-    """ Class for GNSS sensors"""
-
-    def __init__(self, parent_actor):
-        """Constructor method"""
-        self.sensor = None
-        self._parent = parent_actor
-        self.lat = 0.0
-        self.lon = 0.0
-        world = self._parent.get_world()
-        blueprint = world.get_blueprint_library().find('sensor.other.gnss')
-        self.sensor = world.spawn_actor(blueprint, carla.Transform(carla.Location(x=1.0, z=2.8)),
-                                        attach_to=self._parent)
-        # We need to pass the lambda a weak reference to
-        # self to avoid circular reference.
-        weak_self = weakref.ref(self)
-        self.sensor.listen(lambda event: GnssSensor._on_gnss_event(weak_self, event))
-
-    def destroy(self):
-        if self.sensor is not None:
-            self.sensor.destroy()
-
-    @staticmethod
-    def _on_gnss_event(weak_self, event):
-        """GNSS method"""
-        self = weak_self()
-        if not self:
-            return
-        self.lat = event.latitude
-        self.lon = event.longitude
-
-
-# ==============================================================================
-# -- CameraManager -------------------------------------------------------------
-# ==============================================================================
-
-class CameraManager(object):
-    """ Class for camera management"""
-
-    def __init__(self, parent_actor, debug: bool = False):
-        """
-        Constructor Method
-        :param parent_actor: the actor the cameras are attached to
-        :param debug: information whether the camera manager should go into debug mode, showing multiple cameras at a time
-        """
-        self.rgb_camera = None
-        self.sem_seg_camera = None
-        self.rgb_surface = None
-        self.sem_seg_surface = None
-        self.lane_detection_surface = None
-
-        self.debug = debug
-        self._parent = parent_actor
-
-        # transforms for camera
-        # first person
-        self._camera_transform_fp = (carla.Transform(
-            carla.Location(x=2, z=1)), carla.AttachmentType.Rigid)
-        # third person
-        self._camera_transform_tp = (carla.Transform(
-            carla.Location(x=-5.5, z=2.5)), carla.AttachmentType.Rigid)
-
-        # sensors for this camera manager
-        self.sensors = [
-            ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
-            ['sensor.camera.semantic_segmentation', cc.CityScapesPalette,
-             'Camera Semantic Segmentation (CityScapes Palette)']]
-
-        # get the blueprints for the sensors
-        world = self._parent.get_world()
-        bp_library = world.get_blueprint_library()
-        for item in self.sensors:
-            bp = bp_library.find(item[0])
-            if item[0].startswith('sensor.camera'):
-                bp.set_attribute('image_size_x', str(WIDTH))
-                bp.set_attribute('image_size_y', str(HEIGHT))
-            elif item[0].startswith('sensor.lidar'):
-                bp.set_attribute('range', '50')
-                bp.set_attribute('channels', '50')
-                bp.set_attribute('rotation_frequency', '10')
-            item.append(bp)
-
-    def destroy(self):
-        """Destroy the sensors in the simulation."""
-        if self.sem_seg_camera is not None:
-            self.sem_seg_camera.destroy()
-        self.sem_seg_camera = None
-
-        if self.debug:
-            if self.rgb_camera is not None:
-                self.rgb_camera.destroy()
-            self.rgb_camera = None
-
-    def spawn_cameras(self):
-        """
-        Spawn the cameras in the simulation.
-        Spawns only the semantic segmentation camera in normal mode and an additional rgb camera in debug mode
-        """
-        if self.sem_seg_camera is None:
-            self.destroy()
-            self.rgb_surface = None
-            self.sem_seg_surface = None
-            self.lane_detection_surface = None
-
-        # We need to pass the lambda a weak reference to self to avoid circular reference.
-        weak_self = weakref.ref(self)
-
-        if self.debug:
-            self.rgb_camera = self._parent.get_world() \
-                .spawn_actor(self.sensors[0][-1],
-                             self._camera_transform_tp[0],
-                             attach_to=self._parent,
-                             attachment_type=self._camera_transform_tp[-1])
-            self.rgb_camera.listen(lambda image: CameraManager._parse_image(weak_self, image, 0))
-
-        self.sem_seg_camera = self._parent.get_world() \
-            .spawn_actor(self.sensors[1][-1],
-                         self._camera_transform_fp[0],
-                         attach_to=self._parent,
-                         attachment_type=self._camera_transform_fp[-1])
-        self.sem_seg_camera.listen(lambda image: CameraManager._parse_image(weak_self, image, 1))
-
-    def render(self, display):
-        """Render camera images.
-        debug mode:
-            Top Left: RGB image
-            Top Right: Semantic Segmentation image
-            Bottom Left: Lane Edges
-        normal mode:
-            only lane Edges
-        """
-        if self.debug:
-            if all([surface is not None for surface in
-                    [self.rgb_surface, self.sem_seg_surface, self.lane_detection_surface]]):
-                display.blit(self.rgb_surface, (0, 0))
-                display.blit(self.sem_seg_surface, (WIDTH / 2, 0))
-                display.blit(self.lane_detection_surface, (0, HEIGHT / 2))
-
-        else:
-            if self.lane_detection_surface is not None:
-                display.blit(self.lane_detection_surface, (0, 0))
-
-    @staticmethod
-    def _parse_image(weak_self, image, number):
-        """Set the captured image of the selected camera as the surface to be displayed."""
-        self = weak_self()
-        if not self:
-            return
-
-        image.convert(self.sensors[number][1])
-        img = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
-        img = np.reshape(img, (image.height, image.width, 4))
-        img = img[:, :, :3]
-        img = img[:, :, ::-1]
-
-        if self.debug:
-            # scale down image in debug mode to show multiple at the same time
-            d_size = (int(WIDTH / 2), int(HEIGHT / 2))
-            img = cv2.resize(img, d_size)
-
-            if number == 0:
-                self.rgb_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
-            elif number == 1:
-                self.sem_seg_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
-                img = lane_detection_from_sem_seg(img)
-                self.lane_detection_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
-
-        else:
-            img = lane_detection_from_sem_seg(img)
-            self.lane_detection_surface = pygame.surfarray.make_surface(img.swapaxes(0, 1))
-
-
-def lane_detection_from_sem_seg(img):
+def learn_loop(sim_world, tensorboard, replay_memory):
     """
-    Convert a semantic segmentation image into a black and white image where only the contours of the road are highlighted.
-    :param img: the image returned form the semantic segmentation camera
-    :return: a black and shite image containing the road edges
+    Start the learning process by creating all needed components and then continuously executing episodes.
+    A given model will be loaded if the 'load_model_name' is specified. An agent is created with the model and a thread
+    is started, which constantly executes the agents training. The main thread continues to executes episodes.
+    When an error occurs, the current model is saved, so it can be loaded again.
     """
-    height, width, channels = img.shape
-    img_output = np.zeros((height, width, 3), np.uint8)
+    global load_model_name
 
-    # cv2 uses BRG, so when using cv2 the tuple has to be reversed.
-    # CARLA uses RGB, so the tuple can be as is.
+    car_environment = None
+    agent = None
+    trainer_thread = None
 
-    # color of lane marking (157, 234, 50)
-    lower_mask = np.array([147, 224, 40])
-    upper_mask = np.array([167, 244, 60])
-    masked_marking = cv2.inRange(img, lower_mask, upper_mask)
-
-    # color of the street (128, 64, 128)
-    lower_mask = np.array([118, 54, 118])
-    upper_mask = np.array([138, 74, 138])
-    masked_street = cv2.inRange(img, lower_mask, upper_mask)
-
-    masked_image = cv2.bitwise_or(masked_marking, masked_street)
-
-    # find the contour with the largest area which is the street
-    contours, _ = cv2.findContours(masked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-    street, largest_area = None, 0
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area > largest_area:
-            largest_area = area
-            street = contour
-
-    cv2.drawContours(img_output, street, -1, (255, 255, 255), 1)
-    img_output = cv2.cvtColor(img_output, cv2.COLOR_BGR2GRAY)
-
-    return img_output
-
-
-# ==============================================================================
-# -- Game Loop ---------------------------------------------------------
-# ==============================================================================
-
-def game_loop():
-    """
-    Main loop of the simulation.
-    """
-
-    pygame.init()
-    pygame.font.init()
-    world = None
+    episode_rewards = [-20]
+    actions = deque([1], maxlen=200)
 
     try:
-        client = carla.Client(PORT, HOST)
-        client.set_timeout(5.0)
+        # create car environment in the simulator and the Reinforcement Learning agent
+        checkpoint_manager = CheckpointManager()
+        car_environment = CarEnvironment(sim_world, checkpoint_manager)
+        agent = DQNAgent(load_model_name, tensorboard, replay_memory)
 
-        sim_world = client.get_world()
+        # start training thread and wait for training to be initialized
+        trainer_thread = Thread(target=agent.train_in_loop, daemon=True)
+        trainer_thread.start()
+        while not agent.training_initialized:
+            time.sleep(0.01)
 
-        display = pygame.display.set_mode((WIDTH, HEIGHT), pygame.HWSURFACE | pygame.DOUBLEBUF)
+        if load_model_name is None:
+            start_state = np.ones((1, HEIGHT, WIDTH, 1)) * 255, 1, 1, 1
+            agent.get_qs(start_state)
 
-        world = World(sim_world)
+        # execute episodes until the program is stopped
+        while True:
+            execute_episode(agent, car_environment, actions, episode_rewards)
 
-        clock = pygame.time.Clock()
+    except (RuntimeError, KeyboardInterrupt):
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards, False)
 
-        running = True
-        while running:
-            # handle key events
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_SPACE:
-                        world.restart()
-
-            if not running:
-                break
-
-            clock.tick()
-            world.world.wait_for_tick()
-
-            world.render(display)
-            pygame.display.flip()
+        save_model(
+            f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{avg_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
+            agent)
+        log_info("Save except")
 
     finally:
-        if world is not None:
-            world.destroy()
+        # Set termination flag for training thread and wait for it to finish
+        if agent is not None:
+            agent.terminate = True
+            if trainer_thread is not None:
+                trainer_thread.join()
 
-        pygame.quit()
+        if car_environment is not None:
+            car_environment.destroy()
+
+
+def execute_episode(agent: DQNAgent, car_environment: CarEnvironment, actions: deque, episode_rewards: list):
+    """ Execute a full episode and do all administrative tasks regarding this episode. """
+    global episode, epsilon
+
+    episode += 1
+    agent.tensorboard.step = episode
+
+    # driving actions this episode
+    episode_actions, episode_reward = execute_episode_actions(agent, car_environment)
+    actions.extend(episode_actions)
+
+    # append episode reward to a list and log stats every given number of episodes
+    episode_rewards.append(episode_reward)
+    if episode % AGGREGATE_STATS_EVERY == 0 or episode == 1:
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards, False)
+        agent.tensorboard.update_stats(reward_avg=avg_reward, reward_min=min_reward, reward_max=max_reward,
+                                       epsilon=epsilon)
+
+    # decay epsilon each iteration
+    if epsilon > MIN_EPSILON:
+        epsilon *= EPSILON_DECAY
+        epsilon = max(MIN_EPSILON, epsilon)
+
+    # reset epsilon
+    if epsilon < MIN_EPSILON_2 and len(list(set(actions))) == 1:
+        epsilon = 0.5
+
+    print(f"{episode_reward} :Reward | Epsilon: {epsilon}")
+
+    if episode % SAVE_MODEL_EVERY == 0:
+        avg_reward, min_reward, max_reward = calculate_rewards(episode_rewards, True)
+
+        save_model(
+            f'models/{MODEL_NAME}__{max_reward:_>7.2f}max_{avg_reward:_>7.2f}avg_{min_reward:_>7.2f}min__{int(time.time())}.model',
+            agent)
+        log_info("Save episodes")
+
+    if threading.active_count() < 2:
+        raise RuntimeError("A Thread stopped running")
+
+
+def execute_episode_actions(agent: DQNAgent, car_environment: CarEnvironment) -> tuple:
+    """
+    Execute a full episode.
+    First reset the world in the simulator and reset the episode time.
+    Continuously take driving actions until the time runs out or the car gets into a collision.
+    How an action is chosen is based on the epsilon value.
+    If a generated value is lower than the epsilon value, a random action will be selected, but if the generated value
+    is higher, the value with the best q values for the current state will be selected.
+
+    :param agent: the agent doing the learning
+    :param car_environment: the car environment containing the car and all sensors
+    :return: tuple containing a list of the actions taken this episode and the summed reward in this episode
+    """
+    # reset environment and get initial state
+    current_state = car_environment.restart()
+
+    episode_actions = deque(maxlen=200)
+    episode_reward = 0
+    standing = True
+
+    car_environment.episode_start = time.time()
+    car_environment.extra_time = 0
+
+    while True:
+        if standing and current_state[3] != 0:
+            standing = False
+
+        # if the car is standing still go forwards
+        if current_state[3] == 0:
+            action = 1
+            time.sleep(12 / FPS)
+        elif np.random.random() > epsilon:
+            qs = agent.get_qs(current_state)
+            action = np.argmax(qs)
+            episode_actions.append(action)
+        else:
+            action = np.random.randint(0, 9)
+            time.sleep(12 / FPS)
+
+        # execute the action in the environment
+        new_state, reward, done, _ = car_environment.step(action)
+
+        if not standing:
+            episode_reward += reward
+            agent.update_replay_memory((current_state, action, reward, new_state, done))
+
+        current_state = new_state
+
+        if done:
+            break
+
+    # clean up the simulator by destroying the car and the sensors
+    car_environment.destroy()
+
+    return episode_actions, episode_reward
+
+
+def save_model(model_name, agent):
+    global load_model_name
+
+    print("save ", model_name)
+    agent.model.save(model_name)
+    load_model_name = model_name
+
+
+def log_info(message: str):
+    with open("log.txt", "a") as file:
+        file.write(time.strftime("%H %M") + message + "\n")
+
+
+def calculate_rewards(episode_rewards, save: bool) -> tuple:
+    number_of_elements = SAVE_MODEL_EVERY if save else AGGREGATE_STATS_EVERY
+
+    avg_reward = np.mean(episode_rewards[-number_of_elements:])
+    min_reward = min(episode_rewards[-number_of_elements:])
+    max_reward = max(episode_rewards[-number_of_elements:])
+
+    return avg_reward, min_reward, max_reward
 
 
 # ==============================================================================
@@ -472,15 +309,35 @@ def game_loop():
 # ==============================================================================
 
 def main():
-    """Main method"""
-
+    """
+    Keep restarting the simulator and the learning process when the simulator crashes.
+    """
     log_level = logging.INFO
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
     logging.info('listening to server %s:%s', HOST, PORT)
+    print("Number of GPUs available: ", len(tf.config.list_physical_devices('GPU')))
 
+    # create models folder to save the progress in
+    if not os.path.isdir('models'):
+        os.makedirs('models')
+
+    tensorboard = ModifiedTensorBoard(log_dir=f"logs/{MODEL_NAME}-{int(time.time())}")
+    replay_memory = deque(maxlen=REPLAY_MEMORY_SIZE)
+
+    # start the learning process
     try:
-        game_loop()
-
+        while True:
+            try:
+                sim_world = start_carla()
+                learn_loop(sim_world, tensorboard, replay_memory)
+            except RuntimeError as e:
+                print("runtime error", e)
+                print(traceback.format_exc())
+                time.sleep(0.1)
+            except Exception as e:
+                print("main exception", e)
+                print(traceback.format_exc())
+                time.sleep(0.1)
     except KeyboardInterrupt:
         print('\nCancelled by user.')
 
