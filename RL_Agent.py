@@ -103,7 +103,7 @@ class DQNAgent:
         states = [transition[0] for transition in minibatch]
 
         input_images = np.asarray(
-            [np.asarray(np.asarray(state_part[0]) / 255).reshape(480, 640) for state_part in states])
+            [np.asarray(np.asarray(state[0]) / 255).reshape(480, 640) for state in states])
 
         input_adds = np.asarray([[state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR,
                                   (state[3] - TARGET_SPEED) / TARGET_SPEED] for state in states])
@@ -114,7 +114,7 @@ class DQNAgent:
         # new states following the original list of states
         new_states = [transition[3] for transition in minibatch]
         input_images_new = np.asarray(
-            [np.asarray(np.asarray(state_part[0]) / 255).reshape(480, 640) for state_part in new_states])
+            [np.asarray(np.asarray(state[0]) / 255).reshape(480, 640) for state in new_states])
 
         input_adds_new = np.asarray([[state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR,
                                       (state[3] - TARGET_SPEED) / TARGET_SPEED] for state in new_states])
