@@ -6,6 +6,7 @@ import tensorflow as tf
 from keras.layers import Dense, Conv2D, AveragePooling2D, Flatten, Input, Concatenate
 from keras.models import Model
 
+import ModifiedTensorboard
 from Simulator import DEGREE_DIVISOR, WIDTH, HEIGHT, TARGET_SPEED
 
 # ==============================================================================
@@ -29,7 +30,7 @@ DISCOUNT = 0.99
 # ==============================================================================
 
 class DQNAgent:
-    def __init__(self, model_name, tensorboard, replay_memory):
+    def __init__(self, model_name: str, tensorboard: ModifiedTensorboard, replay_memory: list):
         self.model = self.create_model(model_name)
         self.target_model = self.create_model(model_name)
         self.target_model.set_weights(self.model.get_weights())
@@ -43,7 +44,7 @@ class DQNAgent:
         self.last_logged_episode = 0
         self.training_initialized = False
 
-    def create_model(self, model_name):
+    def create_model(self, model_name: str):
         """
         Create a neural network which takes an image, the distance and the angle to the next checkpoint and the current
         velocity of the car as an input.
