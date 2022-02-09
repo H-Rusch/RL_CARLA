@@ -58,7 +58,7 @@ class CarEnvironment(object):
     Contains the needed sensors and the vehicle.
     """
 
-    def __init__(self, carla_world, checkpoint_manager: "CheckpointManager"):
+    def __init__(self, carla_world, checkpoint_manager: CheckpointManager):
         """Constructor method"""
         self.world = carla_world
         self.map = self.world.get_map()
