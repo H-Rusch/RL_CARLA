@@ -30,7 +30,7 @@ DISCOUNT = 0.99
 # ==============================================================================
 
 class DQNAgent:
-    def __init__(self, model_name: str, tensorboard: ModifiedTensorboard, replay_memory: list):
+    def __init__(self, model_name, tensorboard, replay_memory):
         self.model = self.create_model(model_name)
         self.target_model = self.create_model(model_name)
         self.target_model.set_weights(self.model.get_weights())
@@ -44,7 +44,7 @@ class DQNAgent:
         self.last_logged_episode = 0
         self.training_initialized = False
 
-    def create_model(self, model_name: str):
+    def create_model(self, model_name):
         """
         Create a neural network which takes an image, the distance and the angle to the next checkpoint and the current
         velocity of the car as an input.
@@ -99,27 +99,31 @@ class DQNAgent:
         """
         if len(self.replay_memory) < MIN_REPLAY_MEMORY_SIZE:
             return
+
         # a list of states randomly selected from the replay memory
         minibatch = random.sample(self.replay_memory, MINIBATCH_SIZE)
-        states = [transition[0] for transition in minibatch]
 
-        input_images = np.asarray(
-            [np.asarray(np.asarray(state[0]) / 255).reshape(480, 640) for state in states])
+        input_images, input_adds = [], []
+        input_images_new, input_adds_new = [], []
+        for (current_state, _, _, new_state, _) in minibatch:
+            # get image and additional information from current states
+            input_images.append(np.asarray(np.asarray(current_state[0]) / 255).reshape(480, 640))
+            input_adds.append([current_state[1] / DEGREE_DIVISOR, current_state[2] / DISTANCE_DIVISOR,
+                               (current_state[3] - TARGET_SPEED) / TARGET_SPEED])
 
-        input_adds = np.asarray([[state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR,
-                                  (state[3] - TARGET_SPEED) / TARGET_SPEED] for state in states])
+            # get image and additional information from states following the current states
+            input_images_new.append(np.asarray(np.asarray(new_state[0]) / 255).reshape(480, 640))
+            input_adds_new.append([new_state[1] / DEGREE_DIVISOR, new_state[2] / DISTANCE_DIVISOR,
+                                   (new_state[3] - TARGET_SPEED) / TARGET_SPEED])
+
+        input_images = np.asarray(input_images)
+        input_adds = np.asarray(input_adds)
+
+        input_images_new = np.asarray(input_images_new)
+        input_adds_new = np.asarray(input_adds_new)
 
         current_qs_list = self.model.predict({"img_input": input_images, "add_input": input_adds},
                                              PREDICTION_BATCH_SIZE)
-
-        # new states following the original list of states
-        new_states = [transition[3] for transition in minibatch]
-        input_images_new = np.asarray(
-            [np.asarray(np.asarray(state[0]) / 255).reshape(480, 640) for state in new_states])
-
-        input_adds_new = np.asarray([[state[1] / DEGREE_DIVISOR, state[2] / DISTANCE_DIVISOR,
-                                      (state[3] - TARGET_SPEED) / TARGET_SPEED] for state in new_states])
-
         future_qs_list = self.target_model.predict({"img_input": input_images_new, "add_input": input_adds_new},
                                                    PREDICTION_BATCH_SIZE)
 
