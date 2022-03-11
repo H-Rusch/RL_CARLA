@@ -1,4 +1,6 @@
-# Anwendungen der KI 21-22 - Gruppe 5
+# Autonomous driving via reinforcement learning in the CARLA simulator
+
+In this project reinforcement is used to teach a car how drive a path defined by a series of checkpoints. The CARLA simulator is used as the environment for the car. 
 
 ## Prerequisites
 The program was written with Python 3.7 using the 9.11 version of the CARLA Simulator. All needed modules can be installed running the `run.py` script.
