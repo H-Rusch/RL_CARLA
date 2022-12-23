@@ -1,6 +1,12 @@
 # Autonomous driving via reinforcement learning in the CARLA simulator
 
-In this project reinforcement is used to teach a car how drive a path defined by a series of checkpoints. The CARLA simulator is used as the environment for the car. 
+In this project reinforcement is used to teach a car how drive a path defined by a series of checkpoints. The CARLA simulator is used as the environment for the car.
+
+|            ![Checkpoints for the car](checkpoints.png)             | 
+|:------------------------------------------------------------------:|
+| *The list of checkpoints on the map 'Town02'. Blue is start/ end.* |
+
+The final result of the trained model can be seen in the following [Youtube Video](https://www.youtube.com/watch?v=FE4HvNgfeX4).
 
 ## Prerequisites
 The program was written with Python 3.7 using the 9.11 version of the CARLA Simulator. All needed modules can be installed running the `run.py` script.
